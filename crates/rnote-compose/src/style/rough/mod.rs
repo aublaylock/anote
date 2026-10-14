@@ -10,7 +10,8 @@ use super::Composer;
 use crate::Color;
 use crate::ext::{DAffine2Ext, Vector2Ext};
 use crate::shapes::{
-    Arrow, CubicBezier, Ellipse, Line, Polygon, Polyline, QuadraticBezier, Rectangle, Shapeable,
+    Arrow, CubicBezier, Curve, Ellipse, Line, Polygon, Polyline, QuadraticBezier, Rectangle,
+    Shapeable,
 };
 use p2d::bounding_volume::{Aabb, BoundingVolume};
 use roughr::Point2D;
@@ -226,6 +227,20 @@ impl Composer<RoughOptions> for Polyline {
     }
 }
 
+impl Composer<RoughOptions> for Curve {
+    fn composed_bounds(&self, options: &RoughOptions) -> Aabb {
+        self.bounds()
+            .loosened(options.stroke_width * 0.5 + RoughOptions::ROUGH_BOUNDS_MARGIN)
+    }
+
+    fn draw_composed(&self, cx: &mut impl piet::RenderContext, options: &RoughOptions) {
+        let drawable = rough_piet::KurboGenerator::new(generate_roughr_options(options))
+            .bez_path::<f64>(self.outline_path());
+
+        drawable.draw(cx);
+    }
+}
+
 impl Composer<RoughOptions> for Polygon {
     fn composed_bounds(&self, options: &RoughOptions) -> Aabb {
         self.bounds()
@@ -262,6 +277,7 @@ impl Composer<RoughOptions> for crate::Shape {
             crate::Shape::CubicBezier(cubbez) => cubbez.composed_bounds(options),
             crate::Shape::Polyline(polyline) => polyline.composed_bounds(options),
             crate::Shape::Polygon(polygon) => polygon.composed_bounds(options),
+            crate::Shape::Curve(curve) => curve.composed_bounds(options),
         }
     }
 
@@ -275,6 +291,7 @@ impl Composer<RoughOptions> for crate::Shape {
             crate::Shape::CubicBezier(cubbez) => cubbez.draw_composed(cx, options),
             crate::Shape::Polyline(polyline) => polyline.draw_composed(cx, options),
             crate::Shape::Polygon(polygon) => polygon.draw_composed(cx, options),
+            crate::Shape::Curve(curve) => curve.draw_composed(cx, options),
         }
     }
 }

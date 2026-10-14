@@ -3,6 +3,8 @@
 pub mod arrow;
 /// Cubic-bezier curve
 pub mod cubbez;
+/// Curve
+pub mod curve;
 /// Ellipse
 pub mod ellipse;
 /// Line
@@ -23,6 +25,7 @@ pub mod shapeable;
 // Re-exports
 pub use arrow::Arrow;
 pub use cubbez::CubicBezier;
+pub use curve::Curve;
 pub use ellipse::Ellipse;
 pub use line::Line;
 pub use polygon::Polygon;

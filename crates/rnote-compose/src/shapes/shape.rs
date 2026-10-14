@@ -1,6 +1,7 @@
 // Imports
 use super::{
-    Arrow, CubicBezier, Ellipse, Line, Polygon, Polyline, QuadraticBezier, Rectangle, Shapeable,
+    Arrow, CubicBezier, Curve, Ellipse, Line, Polygon, Polyline, QuadraticBezier, Rectangle,
+    Shapeable,
 };
 use crate::Transformable;
 use p2d::bounding_volume::Aabb;
@@ -35,6 +36,9 @@ pub enum Shape {
     /// A polygon shape.
     #[serde(rename = "polygon")]
     Polygon(Polygon),
+    /// A curve shape.
+    #[serde(rename = "curve")]
+    Curve(Curve),
 }
 
 impl Default for Shape {
@@ -70,6 +74,9 @@ impl Transformable for Shape {
             Self::Polygon(polygon) => {
                 polygon.translate(offset);
             }
+            Self::Curve(curve) => {
+                curve.translate(offset);
+            }
         }
     }
 
@@ -98,6 +105,9 @@ impl Transformable for Shape {
             }
             Self::Polygon(polygon) => {
                 polygon.rotate(angle, center);
+            }
+            Self::Curve(curve) => {
+                curve.rotate(angle, center);
             }
         }
     }
@@ -128,6 +138,9 @@ impl Transformable for Shape {
             Self::Polygon(polygon) => {
                 polygon.scale(scale);
             }
+            Self::Curve(curve) => {
+                curve.scale(scale);
+            }
         }
     }
 }
@@ -143,6 +156,7 @@ impl Shapeable for Shape {
             Self::CubicBezier(cubbez) => cubbez.bounds(),
             Self::Polyline(polyline) => polyline.bounds(),
             Self::Polygon(polygon) => polygon.bounds(),
+            Self::Curve(curve) => curve.bounds(),
         }
     }
 
@@ -156,6 +170,7 @@ impl Shapeable for Shape {
             Self::CubicBezier(cubbez) => cubbez.hitboxes(),
             Self::Polyline(polyline) => polyline.hitboxes(),
             Self::Polygon(polygon) => polygon.hitboxes(),
+            Self::Curve(curve) => curve.hitboxes(),
         }
     }
 
@@ -169,6 +184,7 @@ impl Shapeable for Shape {
             Self::CubicBezier(cubbez) => cubbez.outline_path(),
             Self::Polyline(polyline) => polyline.outline_path(),
             Self::Polygon(polygon) => polygon.outline_path(),
+            Self::Curve(curve) => curve.outline_path(),
         }
     }
 }

@@ -5,6 +5,7 @@ pub mod buildable;
 mod coordsystem2dbuilder;
 mod coordsystem3dbuilder;
 mod cubbezbuilder;
+mod curvebuilder;
 mod ellipsebuilder;
 mod fociellipsebuilder;
 mod gridbuilder;
@@ -23,6 +24,7 @@ pub use arrowbuilder::ArrowBuilder;
 pub use coordsystem2dbuilder::CoordSystem2DBuilder;
 pub use coordsystem3dbuilder::CoordSystem3DBuilder;
 pub use cubbezbuilder::CubBezBuilder;
+pub use curvebuilder::CurveBuilder;
 pub use ellipsebuilder::EllipseBuilder;
 pub use fociellipsebuilder::FociEllipseBuilder;
 pub use gridbuilder::GridBuilder;
@@ -93,6 +95,9 @@ pub enum ShapeBuilderType {
     /// A polygon builder
     #[serde(rename = "polygon")]
     Polygon,
+    /// A curve builder
+    #[serde(rename = "curve")]
+    Curve,
 }
 
 impl ShapeBuilderType {
@@ -112,6 +117,7 @@ impl ShapeBuilderType {
             "shapebuilder-cubbez-symbolic" => Some(Self::CubBez),
             "shapebuilder-polyline-symbolic" => Some(Self::Polyline),
             "shapebuilder-polygon-symbolic" => Some(Self::Polygon),
+            "shapebuilder-curve-symbolic" => Some(Self::Curve),
             _ => None,
         }
     }
@@ -134,6 +140,7 @@ impl ShapeBuilderType {
             Self::CubBez => String::from("shapebuilder-cubbez-symbolic"),
             Self::Polyline => String::from("shapebuilder-polyline-symbolic"),
             Self::Polygon => String::from("shapebuilder-polygon-symbolic"),
+            Self::Curve => String::from("shapebuilder-curve-symbolic"),
         }
     }
 }
