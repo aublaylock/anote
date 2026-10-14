@@ -47,6 +47,8 @@ mod imp {
         #[template_child]
         pub(crate) brush_buildertype_modeled: TemplateChild<adw::ActionRow>,
         #[template_child]
+        pub(crate) brush_autoline_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
         pub(crate) solidstyle_pressure_curves_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub(crate) texturedstyle_density_row: TemplateChild<adw::SpinRow>,
@@ -363,6 +365,20 @@ impl RnBrushPage {
             }
         ));
 
+        // Automatic straight lines
+        imp.brush_autoline_row.get().connect_active_notify(clone!(
+            #[weak]
+            appwindow,
+            move |row| {
+                appwindow
+                    .engine_config()
+                    .write()
+                    .pens_config
+                    .brush_config
+                    .auto_line = row.is_active();
+            }
+        ));
+
         // Solid style
         // Pressure curve
         imp.solidstyle_pressure_curves_row
@@ -436,6 +452,9 @@ impl RnBrushPage {
             .brush_config
             .clone();
 
+        self.imp()
+            .brush_autoline_row
+            .set_active(brush_config.auto_line);
         self.set_solidstyle_pressure_curve(brush_config.solid_options.pressure_curve);
         imp.texturedstyle_density_row
             .set_value(brush_config.textured_options.density);

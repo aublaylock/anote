@@ -147,6 +147,11 @@ pub enum EngineTask {
     },
     /// Requests that the typewriter cursor should be blinked/toggled
     BlinkTypewriterCursor,
+    /// The pen was held still while drawing the given brush stroke.
+    BrushHoldTimeout {
+        /// The key of the stroke that is being drawn.
+        stroke_key: StrokeKey,
+    },
     /// Change the permanent zoom to the given value
     Zoom(f64),
     /// Indicates that the application is quitting. Sent to quit the handler which receives the tasks.
@@ -458,6 +463,12 @@ impl Engine {
                 if let Pen::Typewriter(typewriter) = self.penholder.current_pen_mut() {
                     typewriter.toggle_cursor_visibility();
                     widget_flags.redraw = true;
+                }
+            }
+            EngineTask::BrushHoldTimeout { stroke_key } => {
+                if let Pen::Brush(brush) = self.penholder.current_pen_mut() {
+                    widget_flags |=
+                        brush.handle_hold_timeout(stroke_key, &mut engine_view_mut!(self));
                 }
             }
             EngineTask::Zoom(zoom) => {

@@ -206,6 +206,16 @@ Results in the best looking handwriting.</property>
             </object>
           </child>
           <child>
+            <object class="AdwPreferencesGroup">
+              <child>
+                <object class="AdwSwitchRow" id="brush_autoline_row">
+                  <property name="title" translatable="yes">Automatic Straight Lines</property>
+                  <property name="subtitle" translatable="yes">Hold the pen still at the end of a roughly straight stroke to turn it into a straight line</property>
+                </object>
+              </child>
+            </object>
+          </child>
+          <child>
             <!-- Solid options -->
             <object class="AdwPreferencesGroup">
               <property name="title" translatable="yes">Solid Style</property>

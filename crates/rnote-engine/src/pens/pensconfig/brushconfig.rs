@@ -97,7 +97,7 @@ impl std::ops::DerefMut for SolidOptions {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename = "brush_config")]
 pub struct BrushConfig {
     #[serde(rename = "builder_type")]
@@ -110,6 +110,22 @@ pub struct BrushConfig {
     pub solid_options: SolidOptions,
     #[serde(rename = "textured_options")]
     pub textured_options: TexturedOptions,
+    /// Convert roughly straight strokes into straight lines when the pen is held still at the end.
+    #[serde(rename = "auto_line")]
+    pub auto_line: bool,
+}
+
+impl Default for BrushConfig {
+    fn default() -> Self {
+        Self {
+            builder_type: PenPathBuilderType::default(),
+            style: BrushStyle::default(),
+            marker_options: MarkerOptions::default(),
+            solid_options: SolidOptions::default(),
+            textured_options: TexturedOptions::default(),
+            auto_line: true,
+        }
+    }
 }
 
 impl BrushConfig {
