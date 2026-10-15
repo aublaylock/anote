@@ -454,6 +454,38 @@ gets disabled.</property>
                     </child>
                   </object>
                 </child>
+                <!-- Gemini Group -->
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title" translatable="yes">Gemini</property>
+                    <property name="description" translatable="yes">Used by the capture selector to simplify or evaluate expressions.
+The GEMINI_API_KEY environment variable overrides the key set here.</property>
+                    <child>
+                      <object class="AdwPasswordEntryRow" id="gemini_api_key_row">
+                        <property name="title" translatable="yes">API Key</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="gemini_model_row">
+                        <property name="title" translatable="yes">Model</property>
+                        <property name="subtitle" translatable="yes">Refresh to load the models available to the API key</property>
+                        <property name="model">
+                          <object class="GtkStringList" id="gemini_model_list" />
+                        </property>
+                        <child type="suffix">
+                          <object class="GtkButton" id="gemini_model_refresh_button">
+                            <property name="icon-name">view-refresh-symbolic</property>
+                            <property name="tooltip-text" translatable="yes">Refresh Available Models</property>
+                            <property name="valign">center</property>
+                            <style>
+                              <class name="flat" />
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
                 <!-- Button Shortcuts Group -->
                 <child>
                   <object class="AdwPreferencesGroup">

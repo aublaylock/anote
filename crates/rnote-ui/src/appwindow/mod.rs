@@ -385,6 +385,35 @@ impl RnAppWindow {
         if let Some(enable_text_preprocessing) = widget_flags.enable_text_preprocessing {
             canvas.set_text_preprocessing(enable_text_preprocessing);
         }
+        if widget_flags.capture_ready {
+            // Export in a separate future so the engine is not borrowed while handling the flags
+            glib::spawn_future_local(clone!(
+                #[weak(rename_to=appwindow)]
+                self,
+                #[weak]
+                canvas,
+                async move {
+                    let Some(receiver) = canvas.engine_mut().export_capture() else {
+                        return;
+                    };
+                    let result = match receiver.await {
+                        Ok(result) => result,
+                        Err(e) => Err(anyhow::anyhow!("{e:?}")),
+                    };
+                    match result.and_then(|png_bytes| {
+                        dialogs::dialog_capture_evaluate(&appwindow, png_bytes)
+                    }) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            error!("Capturing region failed, Err: {e:?}");
+                            appwindow
+                                .overlays()
+                                .dispatch_toast_error(&gettext("Capturing region failed"));
+                        }
+                    }
+                }
+            ));
+        }
     }
 
     /// Get the active (selected) tab page.

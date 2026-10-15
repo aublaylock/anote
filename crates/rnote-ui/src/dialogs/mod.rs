@@ -15,7 +15,7 @@ use gettextrs::{gettext, pgettext};
 use gtk4::ShortcutsWindow;
 use gtk4::{
     Builder, Button, CheckButton, ColorDialogButton, FileDialog, Label, MenuButton, StringList,
-    gio, glib, glib::clone,
+    gdk, gio, glib, glib::clone,
 };
 use tracing::{debug, error, warn};
 
@@ -47,6 +47,134 @@ pub(crate) fn dialog_about(appwindow: &RnAppWindow) {
     }
 
     aboutdialog.present(appwindow.root().as_ref());
+}
+
+/// Shows a region captured with the selector and asks Gemini to simplify or evaluate it.
+pub(crate) fn dialog_capture_evaluate(
+    appwindow: &RnAppWindow,
+    png_bytes: Vec<u8>,
+) -> anyhow::Result<()> {
+    const MAX_IMAGE_SIZE: i32 = 800;
+    const MIN_IMAGE_SIZE: i32 = 200;
+    const RESULTS_HEIGHT: i32 = 160;
+    const MARGIN: i32 = 12;
+
+    let texture = gdk::Texture::from_bytes(&glib::Bytes::from(&png_bytes))?;
+    let picture = gtk4::Picture::builder()
+        .paintable(&texture)
+        .can_shrink(true)
+        .content_fit(gtk4::ContentFit::Contain)
+        .vexpand(true)
+        .build();
+
+    let spinner = adw::Spinner::new();
+    let status_label = Label::builder()
+        .label(gettext("Asking Gemini…"))
+        .wrap(true)
+        .selectable(true)
+        .build();
+    let status_box = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .spacing(MARGIN)
+        .halign(gtk4::Align::Center)
+        .build();
+    status_box.append(&spinner);
+    status_box.append(&status_label);
+
+    let expression_label = Label::builder()
+        .wrap(true)
+        .selectable(true)
+        .xalign(0.0)
+        .visible(false)
+        .css_classes(["dim-label"])
+        .build();
+    let result_label = Label::builder()
+        .wrap(true)
+        .selectable(true)
+        .xalign(0.0)
+        .visible(false)
+        .css_classes(["title-2"])
+        .build();
+
+    let content = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(MARGIN)
+        .margin_top(MARGIN)
+        .margin_bottom(MARGIN)
+        .margin_start(MARGIN)
+        .margin_end(MARGIN)
+        .build();
+    content.append(&picture);
+    content.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    content.append(&status_box);
+    content.append(&expression_label);
+    content.append(&result_label);
+
+    let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_top_bar(&adw::HeaderBar::new());
+    toolbar_view.set_content(Some(&content));
+
+    let dialog = adw::Dialog::builder()
+        .title(gettext("Evaluate Expression"))
+        .child(&toolbar_view)
+        .content_width(texture.width().clamp(MIN_IMAGE_SIZE, MAX_IMAGE_SIZE) + 2 * MARGIN)
+        .content_height(
+            texture.height().clamp(MIN_IMAGE_SIZE, MAX_IMAGE_SIZE) + RESULTS_HEIGHT + 2 * MARGIN,
+        )
+        .build();
+    dialog.present(appwindow.root().as_ref());
+
+    let app_settings = appwindow.app().app_settings();
+    let api_key = crate::gemini::api_key(app_settings.as_ref());
+    let model = crate::gemini::model(app_settings.as_ref());
+
+    let Some(api_key) = api_key else {
+        spinner.set_visible(false);
+        status_label.set_label(&gettext(
+            "No Gemini API key is set. Add one in Settings under “Gemini”.",
+        ));
+        status_label.add_css_class("error");
+        return Ok(());
+    };
+
+    glib::spawn_future_local(clone!(
+        #[weak]
+        spinner,
+        #[weak]
+        status_label,
+        #[weak]
+        status_box,
+        #[weak]
+        expression_label,
+        #[weak]
+        result_label,
+        async move {
+            let result =
+                gio::spawn_blocking(move || crate::gemini::evaluate(&api_key, &model, &png_bytes))
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("Gemini request thread panicked")));
+            spinner.set_visible(false);
+
+            match result {
+                Ok(evaluation) => {
+                    status_box.set_visible(false);
+                    if !evaluation.expression.is_empty() {
+                        expression_label.set_label(&evaluation.expression);
+                        expression_label.set_visible(true);
+                    }
+                    result_label.set_label(&evaluation.result);
+                    result_label.set_visible(true);
+                }
+                Err(e) => {
+                    error!("Evaluating captured region with Gemini failed, Err: {e:?}");
+                    status_label.set_label(&format!("{e:#}"));
+                    status_label.add_css_class("error");
+                }
+            }
+        }
+    ));
+
+    Ok(())
 }
 
 pub(crate) fn dialog_keyboard_shortcuts(appwindow: &RnAppWindow) {

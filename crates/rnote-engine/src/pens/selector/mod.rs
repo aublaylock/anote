@@ -84,6 +84,8 @@ impl Default for SelectorState {
 pub struct Selector {
     pub(super) state: SelectorState,
     pos: Option<Vector2>,
+    /// The bounds of the last captured region, waiting to be exported.
+    capture_bounds: Option<Aabb>,
 }
 
 impl Default for Selector {
@@ -91,6 +93,7 @@ impl Default for Selector {
         Self {
             state: Default::default(),
             pos: None,
+            capture_bounds: None,
         }
     }
 }
@@ -349,7 +352,7 @@ impl DrawableOnDoc for Selector {
                             );
                         }
                     }
-                    SelectorStyle::Rectangle => {
+                    SelectorStyle::Rectangle | SelectorStyle::Capture => {
                         if let Some(first) = path.first()
                             && let Some(last) = path.last()
                         {
@@ -481,13 +484,15 @@ impl Selector {
     const SELECTION_OUTLINE_COLOR: piet::Color = color::GNOME_BRIGHTS[4].with_a8(240);
     /// The fill color when drawing a selection
     const SELECTION_FILL_COLOR: piet::Color = color::GNOME_BRIGHTS[2].with_a8(13);
+    /// The minimum width and height of a captured region, in surface coordinates.
+    const CAPTURE_MIN_EXTENT: f64 = 8.0;
 
     fn add_to_select_path(style: SelectorStyle, path: &mut Vec<Element>, element: Element) {
         match style {
             SelectorStyle::Polygon | SelectorStyle::Single | SelectorStyle::IntersectingPath => {
                 path.push(element);
             }
-            SelectorStyle::Rectangle => {
+            SelectorStyle::Rectangle | SelectorStyle::Capture => {
                 path.push(element);
 
                 if path.len() > 2 {
@@ -496,6 +501,11 @@ impl Selector {
                 }
             }
         }
+    }
+
+    /// Takes the bounds of the last captured region.
+    pub(crate) fn take_capture_bounds(&mut self) -> Option<Aabb> {
+        self.capture_bounds.take()
     }
 
     fn resize_node_bounds(position: ResizeCorner, selection_bounds: Aabb, camera: &Camera) -> Aabb {

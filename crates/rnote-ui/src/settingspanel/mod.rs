@@ -14,7 +14,7 @@ use adw::prelude::*;
 use gettextrs::{gettext, pgettext};
 use gtk4::{
     Adjustment, Button, ColorDialogButton, CompositeTemplate, MenuButton, ScrolledWindow,
-    StringList, ToggleButton, Widget, gdk, glib, glib::clone, subclass::prelude::*,
+    StringList, ToggleButton, Widget, gdk, gio, glib, glib::clone, subclass::prelude::*,
 };
 use num_traits::ToPrimitive;
 use rnote_compose::penevent::ShortcutKey;
@@ -24,7 +24,8 @@ use rnote_engine::document::background::PatternStyle;
 use rnote_engine::document::format::{self, Format, PredefinedFormat};
 use rnote_engine::ext::GdkRGBAExt;
 use rnote_engine::pens::PenMode;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use tracing::error;
 
 mod imp {
     use super::*;
@@ -53,6 +54,16 @@ mod imp {
         pub(crate) general_regular_cursor_picker_menubutton: TemplateChild<MenuButton>,
         #[template_child]
         pub(crate) general_show_drawing_cursor_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub(crate) gemini_api_key_row: TemplateChild<adw::PasswordEntryRow>,
+        #[template_child]
+        pub(crate) gemini_model_row: TemplateChild<adw::ComboRow>,
+        #[template_child]
+        pub(crate) gemini_model_list: TemplateChild<StringList>,
+        #[template_child]
+        pub(crate) gemini_model_refresh_button: TemplateChild<Button>,
+        /// Set while the model list is replaced, to not overwrite the selected model setting.
+        pub(crate) gemini_models_updating: Cell<bool>,
         #[template_child]
         pub(crate) general_drawing_cursor_picker_row: TemplateChild<adw::ActionRow>,
         #[template_child]
@@ -563,7 +574,144 @@ impl RnSettingsPanel {
         self.setup_general(appwindow);
         self.setup_format(appwindow);
         self.setup_doc(appwindow);
+        self.setup_gemini(appwindow);
         self.setup_shortcuts(appwindow);
+    }
+
+    fn setup_gemini(&self, appwindow: &RnAppWindow) {
+        let imp = self.imp();
+        let Some(app_settings) = appwindow.app().app_settings() else {
+            return;
+        };
+
+        app_settings
+            .bind("gemini-api-key", &*imp.gemini_api_key_row, "text")
+            .build();
+
+        // Until the available models are fetched, offer the default and the selected model
+        self.set_gemini_models(
+            &app_settings,
+            vec![crate::gemini::DEFAULT_MODEL.to_string()],
+        );
+
+        imp.gemini_model_row.connect_selected_notify(clone!(
+            #[weak(rename_to=settingspanel)]
+            self,
+            #[weak]
+            app_settings,
+            move |row| {
+                if settingspanel.imp().gemini_models_updating.get() {
+                    return;
+                }
+                let Some(model) = row
+                    .selected_item()
+                    .and_downcast::<gtk4::StringObject>()
+                    .map(|obj| obj.string())
+                else {
+                    return;
+                };
+                if let Err(e) = app_settings.set_string("gemini-model", &model) {
+                    error!("Failed to set setting `gemini-model`, Err: {e:?}");
+                }
+            }
+        ));
+
+        imp.gemini_model_refresh_button.connect_clicked(clone!(
+            #[weak(rename_to=settingspanel)]
+            self,
+            #[weak]
+            app_settings,
+            #[weak]
+            appwindow,
+            move |_| {
+                settingspanel.refresh_gemini_models(&appwindow, &app_settings, true);
+            }
+        ));
+
+        self.refresh_gemini_models(appwindow, &app_settings, false);
+    }
+
+    /// Replaces the models offered in the model dropdown, keeping the selected model.
+    fn set_gemini_models(&self, app_settings: &gio::Settings, mut models: Vec<String>) {
+        let imp = self.imp();
+        let selected_model = crate::gemini::model(Some(app_settings));
+        if !models.contains(&selected_model) {
+            models.insert(0, selected_model.clone());
+        }
+        let selected_index = models
+            .iter()
+            .position(|model| *model == selected_model)
+            .unwrap_or(0);
+
+        imp.gemini_models_updating.set(true);
+        let n_items = imp.gemini_model_list.n_items();
+        imp.gemini_model_list.splice(
+            0,
+            n_items,
+            &models.iter().map(String::as_str).collect::<Vec<&str>>(),
+        );
+        imp.gemini_model_row.set_selected(selected_index as u32);
+        imp.gemini_models_updating.set(false);
+    }
+
+    /// Fetches the models available to the API key and offers them in the model dropdown.
+    ///
+    /// Errors are only reported to the user when `report_errors` is true.
+    fn refresh_gemini_models(
+        &self,
+        appwindow: &RnAppWindow,
+        app_settings: &gio::Settings,
+        report_errors: bool,
+    ) {
+        let Some(api_key) = crate::gemini::api_key(Some(app_settings)) else {
+            if report_errors {
+                appwindow.overlays().dispatch_toast_error(&gettext(
+                    "Set a Gemini API key to load the available models",
+                ));
+            }
+            return;
+        };
+        let imp = self.imp();
+        imp.gemini_model_refresh_button.set_sensitive(false);
+
+        glib::spawn_future_local(clone!(
+            #[weak(rename_to=settingspanel)]
+            self,
+            #[weak]
+            app_settings,
+            #[weak]
+            appwindow,
+            async move {
+                let result = gio::spawn_blocking(move || crate::gemini::list_models(&api_key))
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("Gemini request thread panicked")));
+                settingspanel
+                    .imp()
+                    .gemini_model_refresh_button
+                    .set_sensitive(true);
+
+                match result {
+                    Ok(models) if !models.is_empty() => {
+                        settingspanel.set_gemini_models(&app_settings, models);
+                    }
+                    Ok(_) => {
+                        if report_errors {
+                            appwindow.overlays().dispatch_toast_error(&gettext(
+                                "No suitable Gemini models are available for this API key",
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        error!("Loading available Gemini models failed, Err: {e:?}");
+                        if report_errors {
+                            appwindow
+                                .overlays()
+                                .dispatch_toast_error(&gettext("Loading Gemini models failed"));
+                        }
+                    }
+                }
+            }
+        ));
     }
 
     fn setup_general(&self, appwindow: &RnAppWindow) {

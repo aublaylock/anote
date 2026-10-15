@@ -2,6 +2,7 @@
 use super::{Engine, StrokeContent};
 use crate::fileformats::rnoteformat::RnoteFile;
 use crate::fileformats::{FileFormatSaver, xoppformat};
+use crate::pens::Pen;
 use anyhow::Context;
 use futures::channel::oneshot;
 use p2d::math::Vector2;
@@ -915,6 +916,48 @@ impl Engine {
         });
 
         oneshot_receiver
+    }
+
+    /// The scale factor used when rendering a captured region to an image.
+    const CAPTURE_IMAGE_SCALE: f64 = 2.0;
+
+    /// Exports the region last captured with the selector as PNG bytes.
+    ///
+    /// Returns `None` if no region was captured.
+    pub fn export_capture(&mut self) -> Option<oneshot::Receiver<anyhow::Result<Vec<u8>>>> {
+        let Pen::Selector(selector) = self.penholder.current_pen_mut() else {
+            return None;
+        };
+        let bounds = selector.take_capture_bounds()?;
+        let content = StrokeContent::default()
+            .with_strokes(
+                self.store.get_strokes_arc(
+                    &self
+                        .store
+                        .stroke_keys_as_rendered_intersecting_bounds(bounds),
+                ),
+            )
+            .with_bounds(bounds)
+            .with_background(self.document.config.background);
+        let (oneshot_sender, oneshot_receiver) = oneshot::channel::<anyhow::Result<Vec<u8>>>();
+
+        rayon::spawn(move || {
+            let result = || -> anyhow::Result<Vec<u8>> {
+                // Draw the background color, but not the pattern, so only the content is visible.
+                let svg = content
+                    .gen_svg(true, false, false, 0.0)?
+                    .context("Generating Svg for captured region returned None")?;
+                svg.gen_image(Self::CAPTURE_IMAGE_SCALE)?
+                    .into_encoded_bytes(image::ImageFormat::Png, None)
+            };
+            if oneshot_sender.send(result()).is_err() {
+                error!(
+                    "Sending result to receiver failed while exporting captured region. Receiver already dropped."
+                );
+            }
+        });
+
+        Some(oneshot_receiver)
     }
 
     /// Generate a thumbnail PNG.

@@ -419,6 +419,29 @@ impl Selector {
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
             },
+            SelectorState::Selecting { path }
+                if engine_view.config.pens_config.selector_config.style
+                    == SelectorStyle::Capture =>
+            {
+                if let Some(first) = path.first()
+                    && let Some(last) = path.last()
+                {
+                    let bounds = Aabb::new_positive(first.pos, last.pos);
+                    let min_extent = Self::CAPTURE_MIN_EXTENT / engine_view.camera.total_zoom();
+                    if bounds.extents().min_element() >= min_extent {
+                        self.capture_bounds = Some(bounds);
+                        widget_flags.capture_ready = true;
+                    }
+                }
+                self.state = SelectorState::Idle;
+                widget_flags.redraw = true;
+
+                EventResult {
+                    handled: true,
+                    propagate: EventPropagation::Stop,
+                    progress: PenProgress::Finished,
+                }
+            }
             SelectorState::Selecting { path } => {
                 let mut progress = PenProgress::Finished;
 
@@ -473,6 +496,8 @@ impl Selector {
                             vec![]
                         }
                     }
+                    // Handled above
+                    SelectorStyle::Capture => vec![],
                 };
 
                 if !new_selection.is_empty() {

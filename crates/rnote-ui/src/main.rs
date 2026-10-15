@@ -20,6 +20,7 @@ pub(crate) mod contextmenu;
 pub(crate) mod dialogs;
 pub(crate) mod env;
 pub(crate) mod filetype;
+pub(crate) mod gemini;
 pub(crate) mod globals;
 pub(crate) mod groupediconpicker;
 pub(crate) mod iconpicker;

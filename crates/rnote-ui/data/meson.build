@@ -215,6 +215,7 @@ rnote_ui_gresources_icons_files = files(
     'icons/scalable/actions/pen-eraser-symbolic.svg',
     'icons/scalable/actions/pen-eraser-trash-colliding-strokes-symbolic.svg',
     'icons/scalable/actions/pen-selector-intersectingpath-symbolic.svg',
+    'icons/scalable/actions/pen-selector-capture-symbolic.svg',
     'icons/scalable/actions/pen-selector-polygon-symbolic.svg',
     'icons/scalable/actions/pen-selector-rectangle-symbolic.svg',
     'icons/scalable/actions/pen-selector-single-symbolic.svg',

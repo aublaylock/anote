@@ -26,6 +26,8 @@ pub struct WidgetFlags {
     /// Meaning, when enabled instead of key events, text events are then emitted
     /// for regular unicode text. Used when writing text with the typewriter.
     pub enable_text_preprocessing: Option<bool>,
+    /// A region was captured with the selector and can be exported with `Engine::export_capture()`.
+    pub capture_ready: bool,
 }
 
 impl Default for WidgetFlags {
@@ -42,6 +44,7 @@ impl Default for WidgetFlags {
             hide_undo: None,
             hide_redo: None,
             enable_text_preprocessing: None,
+            capture_ready: false,
         }
     }
 }
@@ -65,6 +68,7 @@ impl std::ops::BitOrAssign for WidgetFlags {
         self.zoomed_temporarily |= rhs.zoomed_temporarily;
         self.zoomed |= rhs.zoomed;
         self.deselect_color_setters |= rhs.deselect_color_setters;
+        self.capture_ready |= rhs.capture_ready;
         if rhs.hide_undo.is_some() {
             self.hide_undo = rhs.hide_undo
         }
