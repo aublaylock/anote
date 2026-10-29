@@ -845,6 +845,16 @@ mod imp {
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |_gesture, x, y| {
+                        let enabled = canvaswrapper
+                            .root()
+                            .and_downcast::<RnAppWindow>()
+                            .and_then(|appwindow| appwindow.app().app_settings())
+                            .is_none_or(|settings| {
+                                settings.boolean("touch-long-press-contextmenu")
+                            });
+                        if !enabled {
+                            return;
+                        }
                         let popover = canvaswrapper.contextmenu().popover();
                         canvaswrapper
                             .imp()

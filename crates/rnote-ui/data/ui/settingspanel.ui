@@ -75,6 +75,12 @@ gets disabled.</property>
                       </object>
                     </child>
                     <child>
+                      <object class="AdwSwitchRow" id="general_touch_long_press_contextmenu_row">
+                        <property name="title" translatable="yes">Touch Long-Press Context Menu</property>
+                        <property name="subtitle" translatable="yes">Set whether holding a finger on the canvas opens the context menu</property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwActionRow" id="general_regular_cursor_picker_row">
                         <property name="title" translatable="yes">Regular Cursor</property>
                         <property name="subtitle" translatable="yes">Set the regular cursor</property>

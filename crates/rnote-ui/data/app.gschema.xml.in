@@ -141,6 +141,10 @@
       <default>false</default>
       <summary>block pinch to zoom</summary>
     </key>
+    <key name="touch-long-press-contextmenu" type="b">
+      <default>true</default>
+      <summary>open the canvas context menu with a touch long-press</summary>
+    </key>
     <key name="respect-borders" type="b">
       <default>false</default>
       <summary>respect borders when pasting</summary>

@@ -49,6 +49,8 @@ mod imp {
         #[template_child]
         pub(crate) general_inertial_scrolling_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
+        pub(crate) general_touch_long_press_contextmenu_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
         pub(crate) general_regular_cursor_picker: TemplateChild<RnIconPicker>,
         #[template_child]
         pub(crate) general_regular_cursor_picker_menubutton: TemplateChild<MenuButton>,
@@ -716,6 +718,16 @@ impl RnSettingsPanel {
 
     fn setup_general(&self, appwindow: &RnAppWindow) {
         let imp = self.imp();
+
+        if let Some(app_settings) = appwindow.app().app_settings() {
+            app_settings
+                .bind(
+                    "touch-long-press-contextmenu",
+                    &*imp.general_touch_long_press_contextmenu_row,
+                    "active",
+                )
+                .build();
+        }
 
         // autosave enable row
         imp.general_autosave_row
