@@ -24,9 +24,6 @@ pub enum SelectorStyle {
     Single,
     #[serde(rename = "intersectingpath")]
     IntersectingPath,
-    /// Captures an image of a rectangular region instead of selecting strokes.
-    #[serde(rename = "capture")]
-    Capture,
 }
 
 impl Default for SelectorStyle {
