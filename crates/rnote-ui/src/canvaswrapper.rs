@@ -7,13 +7,31 @@ use gtk4::{
     prelude::*, subclass::prelude::*,
 };
 use once_cell::sync::Lazy;
+use p2d::bounding_volume::Aabb;
 use p2d::math::Vector2;
 use rnote_compose::penevent::ShortcutKey;
 use rnote_engine::Camera;
 use rnote_engine::ext::GraphenePointExt;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// State of moving or resizing selected images with touch gestures.
+#[derive(Debug, Default)]
+struct ImageTouchState {
+    /// When the current finger tap started.
+    tap_start: Cell<Option<Instant>>,
+    /// Whether a finger is moving the selected images.
+    moving: Cell<bool>,
+    /// The offset already applied while moving, in document coordinates.
+    applied_offset: Cell<Vector2>,
+    /// Whether a pinch is resizing the selected images.
+    resizing: Cell<bool>,
+    /// The center between the fingers when the pinch was last handled, in wrapper coordinates.
+    last_pinch_center: Cell<Vector2>,
+    /// The scale already applied while resizing.
+    applied_scale: Cell<f64>,
+}
 
 #[derive(Debug, Default)]
 struct Connections {
@@ -36,6 +54,7 @@ mod imp {
         pub(crate) inertial_scrolling: Cell<bool>,
         pub(crate) pointer_pos: Cell<Option<Vector2>>,
         pub(crate) last_contextmenu_pos: Cell<Option<Vector2>>,
+        image_touch: ImageTouchState,
 
         pub(crate) pointer_motion_controller: EventControllerMotion,
         pub(crate) canvas_drag_gesture: GestureDrag,
@@ -47,6 +66,8 @@ mod imp {
         pub(crate) canvas_alt_shift_drag_gesture: GestureDrag,
         pub(crate) touch_two_finger_long_press_gesture: GestureLongPress,
         pub(crate) touch_long_press_gesture: GestureLongPress,
+        pub(crate) touch_tap_gesture: GestureClick,
+        pub(crate) touch_image_drag_gesture: GestureDrag,
 
         #[template_child]
         pub(crate) scroller: TemplateChild<ScrolledWindow>,
@@ -127,6 +148,20 @@ mod imp {
                 .touch_only(true)
                 .build();
 
+            // Finger taps, to select images and deselect them
+            let touch_tap_gesture = GestureClick::builder()
+                .name("touch_tap_gesture")
+                .touch_only(true)
+                .propagation_phase(PropagationPhase::Capture)
+                .build();
+
+            // Moving selected images with one finger
+            let touch_image_drag_gesture = GestureDrag::builder()
+                .name("touch_image_drag_gesture")
+                .touch_only(true)
+                .propagation_phase(PropagationPhase::Capture)
+                .build();
+
             Self {
                 connections: RefCell::new(Connections::default()),
                 canvas_touch_drawing_handler: RefCell::new(None),
@@ -135,6 +170,7 @@ mod imp {
                 inertial_scrolling: Cell::new(true),
                 pointer_pos: Cell::new(None),
                 last_contextmenu_pos: Cell::new(None),
+                image_touch: ImageTouchState::default(),
 
                 pointer_motion_controller,
                 canvas_drag_gesture,
@@ -146,6 +182,8 @@ mod imp {
                 canvas_alt_shift_drag_gesture,
                 touch_two_finger_long_press_gesture,
                 touch_long_press_gesture,
+                touch_tap_gesture,
+                touch_image_drag_gesture,
 
                 scroller: TemplateChild::<ScrolledWindow>::default(),
                 canvas: TemplateChild::<RnCanvas>::default(),
@@ -180,8 +218,6 @@ mod imp {
             self.scroller
                 .add_controller(self.canvas_drag_gesture.clone());
             self.scroller
-                .add_controller(self.canvas_zoom_gesture.clone());
-            self.scroller
                 .add_controller(self.canvas_multi_press_gesture.clone());
             self.scroller
                 .add_controller(self.canvas_zoom_scroll_controller.clone());
@@ -191,13 +227,21 @@ mod imp {
                 .add_controller(self.canvas_alt_drag_gesture.clone());
             self.scroller
                 .add_controller(self.canvas_alt_shift_drag_gesture.clone());
-            self.scroller
-                .add_controller(self.touch_two_finger_long_press_gesture.clone());
             self.canvas
                 .add_controller(self.touch_long_press_gesture.clone());
+            // Touch gestures that need to take precedence over the scroller's own touch gestures are added to
+            // this wrapper. As an ancestor of the scroller, it receives touch events first, and claiming a touch
+            // here cancels it for the scroller.
+            obj.add_controller(self.canvas_zoom_gesture.clone());
+            obj.add_controller(self.touch_two_finger_long_press_gesture.clone());
+            obj.add_controller(self.touch_tap_gesture.clone());
+            obj.add_controller(self.touch_image_drag_gesture.clone());
 
             // group
             self.touch_two_finger_long_press_gesture
+                .group_with(&self.canvas_zoom_gesture);
+            // Grouped so that a finger moving an image can still be part of a pinch resizing it
+            self.touch_image_drag_gesture
                 .group_with(&self.canvas_zoom_gesture);
 
             self.setup_input();
@@ -329,6 +373,43 @@ mod imp {
             self.workaround_restore_kinetic_scrolling();
         }
 
+        /// Converts a position on this wrapper to a document position.
+        fn wrapper_pos_to_doc(&self, x: f64, y: f64) -> Option<Vector2> {
+            let canvas = self.canvas.get();
+            let pos = self
+                .obj()
+                .compute_point(&canvas, &graphene::Point::from_p2d_vec(Vector2::new(x, y)))?
+                .to_p2d_vec();
+            Some(
+                canvas
+                    .engine_ref()
+                    .camera
+                    .transform()
+                    .inverse()
+                    .transform_point2(pos),
+            )
+        }
+
+        /// Whether the selection consists only of images and contains the given position on this wrapper.
+        fn selected_images_contain(&self, x: f64, y: f64) -> Option<Aabb> {
+            let pos = self.wrapper_pos_to_doc(x, y)?;
+            let bounds = self.canvas.engine_ref().selected_images_bounds()?;
+            bounds.contains_local_point(pos).then_some(bounds)
+        }
+
+        /// Finishes moving or resizing images with touch, if active.
+        fn image_touch_finish(&self) {
+            let moved = self.image_touch.moving.replace(false);
+            let resized = self.image_touch.resizing.replace(false);
+            if moved {
+                self.workaround_restore_kinetic_scrolling();
+            }
+            if moved || resized {
+                let widget_flags = self.canvas.engine_mut().image_touch_finish();
+                self.canvas.emit_handle_widget_flags(widget_flags);
+            }
+        }
+
         fn setup_input(&self) {
             let obj = self.obj();
 
@@ -410,6 +491,102 @@ mod imp {
                 ));
             }
 
+            // Finger taps select images, or deselect them and switch back to the brush
+            {
+                const TOUCH_TAP_MAX_DURATION: Duration = Duration::from_millis(400);
+
+                self.touch_tap_gesture.connect_pressed(clone!(
+                    #[weak(rename_to=canvaswrapper)]
+                    obj,
+                    move |_, _, _, _| {
+                        canvaswrapper
+                            .imp()
+                            .image_touch
+                            .tap_start
+                            .set(Some(Instant::now()));
+                    }
+                ));
+                self.touch_tap_gesture.connect_released(clone!(
+                    #[weak(rename_to=canvaswrapper)]
+                    obj,
+                    move |_, _, x, y| {
+                        let imp = canvaswrapper.imp();
+                        let Some(tap_start) = imp.image_touch.tap_start.take() else {
+                            return;
+                        };
+                        let canvas = canvaswrapper.canvas();
+                        if tap_start.elapsed() > TOUCH_TAP_MAX_DURATION || canvas.touch_drawing() {
+                            return;
+                        }
+                        let Some(pos) = imp.wrapper_pos_to_doc(x, y) else {
+                            return;
+                        };
+                        let widget_flags = canvas.engine_mut().image_touch_tap(pos);
+                        canvas.emit_handle_widget_flags(widget_flags);
+                    }
+                ));
+            }
+
+            // Move selected images with one finger
+            {
+                self.touch_image_drag_gesture.connect_drag_begin(clone!(
+                    #[weak(rename_to=canvaswrapper)]
+                    obj,
+                    move |gesture, x, y| {
+                        let imp = canvaswrapper.imp();
+                        imp.image_touch.moving.set(false);
+                        if canvaswrapper.canvas().touch_drawing()
+                            || imp.selected_images_contain(x, y).is_none()
+                        {
+                            // Not claiming, so panning and zooming keep working
+                            return;
+                        }
+                        // Claiming and disabling kinetic scrolling prevent the view from panning while the
+                        // image is moved
+                        gesture.set_state(EventSequenceState::Claimed);
+                        imp.workaround_disable_kinetic_scrolling();
+                        imp.image_touch.moving.set(true);
+                        imp.image_touch.applied_offset.set(Vector2::ZERO);
+                    }
+                ));
+                self.touch_image_drag_gesture.connect_drag_update(clone!(
+                    #[weak(rename_to=canvaswrapper)]
+                    obj,
+                    move |_, x, y| {
+                        let imp = canvaswrapper.imp();
+                        if !imp.image_touch.moving.get() || imp.image_touch.resizing.get() {
+                            return;
+                        }
+                        let canvas = canvaswrapper.canvas();
+                        let offset = Vector2::new(x, y) / canvas.engine_ref().camera.total_zoom();
+                        let delta = offset - imp.image_touch.applied_offset.replace(offset);
+                        let widget_flags = canvas.engine_mut().image_touch_translate(delta);
+                        canvas.emit_handle_widget_flags(widget_flags);
+                    }
+                ));
+                self.touch_image_drag_gesture.connect_drag_end(clone!(
+                    #[weak(rename_to=canvaswrapper)]
+                    obj,
+                    move |_, _, _| {
+                        let imp = canvaswrapper.imp();
+                        // A pinch that took over finishes when it ends
+                        if !imp.image_touch.resizing.get() {
+                            imp.image_touch_finish();
+                        }
+                    }
+                ));
+                self.touch_image_drag_gesture.connect_cancel(clone!(
+                    #[weak(rename_to=canvaswrapper)]
+                    obj,
+                    move |_, _| {
+                        let imp = canvaswrapper.imp();
+                        if !imp.image_touch.resizing.get() {
+                            imp.image_touch_finish();
+                        }
+                    }
+                ));
+            }
+
             // Drag canvas gesture
             {
                 let touch_drag_start = Rc::new(Cell::new(Vector2::ZERO));
@@ -442,6 +619,10 @@ mod imp {
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |_, x, y| {
+                        // Don't pan while a finger moves selected images
+                        if canvaswrapper.imp().image_touch.moving.get() {
+                            return;
+                        }
                         let canvas = canvaswrapper.canvas();
                         let new_offset = touch_drag_start.get() - Vector2::new(x, y);
                         let widget_flags = canvas.engine_mut().camera_set_offset_expand(new_offset);
@@ -546,6 +727,17 @@ mod imp {
                         // workaround for https://gitlab.gnome.org/GNOME/gtk/-/issues/187
                         canvaswrapper.imp().workaround_disable_kinetic_scrolling();
 
+                        // Pinching on selected images resizes them instead of zooming
+                        let imp = canvaswrapper.imp();
+                        if let Some((x, y)) = gesture.bounding_box_center()
+                            && imp.selected_images_contain(x, y).is_some()
+                        {
+                            imp.image_touch.resizing.set(true);
+                            imp.image_touch.last_pinch_center.set(Vector2::new(x, y));
+                            imp.image_touch.applied_scale.set(1.0);
+                            return;
+                        }
+
                         let current_zoom = canvaswrapper.canvas().engine_ref().camera.total_zoom();
 
                         zoom_begin.set(current_zoom);
@@ -576,6 +768,28 @@ mod imp {
                     obj,
                     move |gesture, scale| {
                         let canvas = canvaswrapper.canvas();
+
+                        let imp = canvaswrapper.imp();
+                        if imp.image_touch.resizing.get() {
+                            let factor = scale / imp.image_touch.applied_scale.replace(scale);
+                            if let Some((x, y)) = gesture.bounding_box_center() {
+                                // Move along with the center between the fingers
+                                let center = Vector2::new(x, y);
+                                let delta = (center
+                                    - imp.image_touch.last_pinch_center.replace(center))
+                                    / canvas.engine_ref().camera.total_zoom();
+                                let widget_flags = canvas.engine_mut().image_touch_translate(delta);
+                                canvas.emit_handle_widget_flags(widget_flags);
+
+                                // Resize around the center between the fingers
+                                if let Some(pivot) = imp.wrapper_pos_to_doc(x, y) {
+                                    let widget_flags =
+                                        canvas.engine_mut().image_touch_scale(factor, pivot);
+                                    canvas.emit_handle_widget_flags(widget_flags);
+                                }
+                            }
+                            return;
+                        }
 
                         if (Camera::ZOOM_MIN..=Camera::ZOOM_MAX)
                             .contains(&(zoom_begin.get() * scale))
@@ -615,6 +829,7 @@ mod imp {
                     move |_gesture, _event_sequence| {
                         // workaround for https://gitlab.gnome.org/GNOME/gtk/-/issues/187
                         canvaswrapper.imp().workaround_restore_kinetic_scrolling();
+                        canvaswrapper.imp().image_touch_finish();
 
                         let widget_flags = canvaswrapper
                             .canvas()
@@ -634,6 +849,7 @@ mod imp {
 
                         // workaround for https://gitlab.gnome.org/GNOME/gtk/-/issues/187
                         canvaswrapper.imp().workaround_restore_kinetic_scrolling();
+                        canvaswrapper.imp().image_touch_finish();
 
                         let widget_flags = canvaswrapper
                             .canvas()

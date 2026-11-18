@@ -2,6 +2,7 @@
 pub mod animation;
 pub mod config;
 pub mod export;
+pub mod imagetouch;
 pub mod import;
 pub mod rendering;
 pub mod snapshot;
