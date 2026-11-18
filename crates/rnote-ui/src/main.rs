@@ -1,10 +1,5 @@
 #![warn(missing_debug_implementations)]
 #![allow(clippy::single_match)]
-// Turns off console window on Windows, but not when building with dev profile.
-#![cfg_attr(
-    all(not(debug_assertions), target_os = "windows"),
-    windows_subsystem = "windows"
-)]
 
 // Modules
 pub(crate) mod app;
@@ -71,9 +66,6 @@ use tracing::debug;
 fn main() -> glib::ExitCode {
     if let Err(e) = setup_tracing() {
         eprintln!("failed to setup tracing, Err: {e:?}");
-    }
-    if let Err(e) = env::setup_env() {
-        eprintln!("failed to setup env, Err: {e:?}");
     }
     if let Err(e) = setup_i18n() {
         eprintln!("failed to setup i18n, Err: {e:?}");

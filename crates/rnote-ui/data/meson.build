@@ -10,17 +10,10 @@ desktop_conf = configuration_data()
 desktop_conf.set('APP_ID', app_id)
 desktop_conf.set('APP_NAME', app_name)
 desktop_conf.set('DESKTOP_FILE_NAME_ENTRY', desktop_file_name_entry)
-desktop_file_in = configure_file(
+desktop_file = configure_file(
     input: 'app.desktop.in.in',
-    output: '@BASENAME@',
-    configuration: desktop_conf,
-)
-
-desktop_file = i18n.merge_file(
-    input: desktop_file_in,
     output: app_id + '.desktop',
-    type: 'desktop',
-    po_dir: '../po',
+    configuration: desktop_conf,
     install: true,
     install_dir: datadir / 'applications',
 )
@@ -67,16 +60,10 @@ appdata_conf.set('APP_REPO_URL', app_repo_url)
 appdata_conf.set('APP_ISSUES_URL', app_issues_url)
 appdata_conf.set('APP_SUPPORT_URL', app_support_url)
 appdata_conf.set('APP_DONATE_URL', app_donate_url)
-appdata_file_in = configure_file(
+appdata_file = configure_file(
     input: 'app.metainfo.xml.in.in',
-    output: '@BASENAME@',
-    configuration: appdata_conf,
-)
-
-appdata_file = i18n.merge_file(
-    input: appdata_file_in,
     output: app_id + '.metainfo.xml',
-    po_dir: '../po',
+    configuration: appdata_conf,
     install: true,
     install_dir: datadir / 'metainfo',
 )
@@ -378,7 +365,6 @@ rnote_ui_gresources_ui_files = files(
 
 rnote_css_style = files(
     'style.css',
-    'style-win.css',
 )
 
 rnote_ui_data_files = [

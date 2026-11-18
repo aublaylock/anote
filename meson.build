@@ -3,7 +3,6 @@ project('rnote', ['rust', 'cpp'], version: '0.15.0', meson_version: '>= 1.0')
 patch = ''
 
 # Modules
-i18n = import('i18n')
 gnome = import('gnome')
 
 # Options
@@ -17,8 +16,6 @@ profile = get_option('profile')
 build_ui = get_option('ui')
 build_cli = get_option('cli')
 ci = get_option('ci')
-win_build_environment_path = get_option('win-build-environment-path')
-win_installer_name = get_option('win-installer-name')
 
 app_name = 'rnote'
 app_name_capitalized = 'Rnote'
@@ -74,7 +71,6 @@ appstreamcli = find_program('appstreamcli', required: false)
 find_program('fc-cache', required: false)
 find_program('update-mime-database', required: false)
 cargo_build_script = find_program('build-aux/cargo_build.py', required: true)
-inno_build_script = find_program('build-aux/inno_build.py', required: true)
 
 cargo_env = ['CARGO_HOME=' + meson.project_build_root() / 'cargo-home']
 cargo_manifest_path = meson.project_source_root() / 'Cargo.toml'
@@ -166,11 +162,7 @@ if build_ui == true
         ui_cargo_options += ['--release']
     endif
 
-    if host_machine.system() == 'windows'
-        ui_output = app_name + '.exe'
-    else
-        ui_output = app_name
-    endif
+    ui_output = app_name
 
     # ui cargo check
     run_target(
@@ -227,77 +219,6 @@ if build_ui == true
         update_desktop_database: true,
         update_mime_database: true,
     )
-
-    # Windows installer
-    message('Configuring Inno-Setup installer script file')
-
-    installer_output = win_installer_name + '.exe'
-
-    inno_script_conf = configuration_data()
-    inno_script_conf.set_quoted('MESON_SOURCE_ROOT', meson.project_source_root())
-    inno_script_conf.set_quoted('MESON_BUILD_ROOT', meson.project_build_root())
-    inno_script_conf.set_quoted(
-        'BUILD_ENVIRONMENT_PATH',
-        win_build_environment_path,
-    )
-    inno_script_conf.set_quoted('APP_NAME', app_name)
-    inno_script_conf.set_quoted('APP_NAME_CAPITALIZED', app_name_capitalized)
-    inno_script_conf.set_quoted('APP_ID', app_id)
-    inno_script_conf.set_quoted('APP_VERSION', version)
-    inno_script_conf.set_quoted('APP_VERSION_SUFFIX', version_suffix)
-    inno_script_conf.set_quoted('APP_AUTHOR_NAME', app_author_name)
-    inno_script_conf.set_quoted('APP_AUTHORS', app_authors)
-    inno_script_conf.set_quoted('APP_WEBSITE', app_website)
-    inno_script_conf.set_quoted('APP_REPO_URL', app_repo_url)
-    inno_script_conf.set_quoted('APP_ISSUES_URL', app_issues_url)
-    inno_script_conf.set_quoted('APP_SUPPORT_URL', app_support_url)
-    inno_script_conf.set_quoted('APP_DONATE_URL', app_donate_url)
-    inno_script_conf.set_quoted('UI_OUTPUT', ui_output)
-    inno_script_conf.set_quoted('INSTALLER_NAME', win_installer_name)
-
-    inno_script = configure_file(
-        input: 'build-aux/rnote_inno.iss.in',
-        output: 'rnote_inno.iss',
-        configuration: inno_script_conf,
-    )
-
-    if build_cli and host_machine.system() == 'windows'
-        define_cli_output = '/DMyAppCliExeName=' + cli_name + '.exe'
-    else
-        define_cli_output = ''
-    endif
-
-    if host_machine.system() == 'windows'
-        # the inno_build_script build script will
-        # package the cli if its name is provided
-        # so only give the name if the cli is
-        # actually built
-        if build_cli
-            package_cli_name = cli_name
-        else
-            package_cli_name = ''
-        endif
-        # build installer
-        custom_target(
-            'build-installer',
-            input: inno_script,
-            output: installer_output,
-            command: [
-                inno_build_script,
-                meson.project_source_root(),
-                meson.project_build_root(),
-                win_build_environment_path,
-                app_name,
-                app_name_capitalized,
-                app_id,
-                ui_output,
-                meson.project_build_root() / '@INPUT@',
-                package_cli_name,
-            ],
-            build_by_default: false,
-            depends: app_cargo_build,
-        )
-    endif
 endif
 
 # build/install the cli
@@ -313,11 +234,7 @@ if build_cli == true
         cli_cargo_options += ['--release']
     endif
 
-    if host_machine.system() == 'windows'
-        cli_output = cli_name + '.exe'
-    else
-        cli_output = cli_name
-    endif
+    cli_output = cli_name
 
     cli_sources = [
         rnote_compose_sources,

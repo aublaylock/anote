@@ -16,13 +16,7 @@ print(f"""
 """, file=sys.stderr)
 
 if not os.environ.get("DESTDIR", ""):
-    if sys.platform.startswith("linux") or sys.platform.startswith("darwin"):
-        print("Rebuilding font cache...", file=sys.stderr)
-        call(["fc-cache", "-v", "-f"])
-    elif sys.platform == "win32":
-        print("Rebuilding font cache...", file=sys.stderr)
-        call(["fc-cache.exe", "-v", "-f"])
-    else:
-        print(f"post-install script is not configured to run on platform: {sys.platform}", file=sys.stderr)
+    print("Rebuilding font cache...", file=sys.stderr)
+    call(["fc-cache", "-v", "-f"])
 
 print("### post-install script finished ###", file=sys.stderr)

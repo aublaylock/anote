@@ -131,16 +131,7 @@ pub(crate) fn handle_pointer_controller_event(
                 if gdk_button == gdk::BUTTON_PRIMARY {
                     pen_state = PenState::Up;
                 } else {
-                    // Workaround for https://github.com/flxzt/rnote/issues/785
-                    // On window only one button release event is sent when the
-                    // pen leaves the screen, and if the button is pressed this
-                    // is not a gdk::BUTTON_PRIMARY
-                    #[allow(clippy::collapsible_else_if)]
-                    if cfg!(target_os = "windows") {
-                        pen_state = PenState::Up;
-                    } else {
-                        pen_state = PenState::Proximity;
-                    }
+                    pen_state = PenState::Proximity;
                 }
             } else {
                 #[allow(clippy::collapsible_else_if)]
@@ -188,18 +179,6 @@ pub(crate) fn handle_pointer_controller_event(
 
         for (element, event_time) in elements {
             trace!(?element, ?pen_state, ?modifier_keys, ?pen_mode, event_time_delta=?now.duration_since(event_time), msg="handle pen event element");
-
-            // Workaround for https://github.com/flxzt/rnote/issues/785
-            // only one event is sent when the pen approaches the screen
-            // on Windows whereas rnote expects 2 (switch to proximity
-            // then down). This forces the pen to be down when on the
-            // screen
-            #[cfg(target_os = "windows")]
-            {
-                if element.pressure > 0.0 && is_stylus {
-                    pen_state = PenState::Down;
-                }
-            }
 
             match pen_state {
                 PenState::Up => {

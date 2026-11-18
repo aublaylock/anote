@@ -268,17 +268,14 @@ impl RnWorkspacesBar {
         // Be sure to get the index before loading the workspaces, else the setting gets overridden
         let selected_workspace_index = settings.uint("selected-workspace-index");
 
-        // don't canonicalize on windows, because that would convert the path to one with extended length syntax
-        if !cfg!(target_os = "windows") {
-            for entry in &workspace_list.iter() {
-                if let Err(err) = entry.ensure_dir() {
-                    warn!(
-                        dir = entry.dir(),
-                        name = entry.name(),
-                        ?err,
-                        "Failed to ensure dir",
-                    );
-                }
+        for entry in &workspace_list.iter() {
+            if let Err(err) = entry.ensure_dir() {
+                warn!(
+                    dir = entry.dir(),
+                    name = entry.name(),
+                    ?err,
+                    "Failed to ensure dir",
+                );
             }
         }
 
