@@ -2,9 +2,6 @@
 message('Configuring desktop file')
 
 desktop_file_name_entry = app_name_capitalized
-if profile == 'devel'
-    desktop_file_name_entry += ' (Development)'
-endif
 
 desktop_conf = configuration_data()
 desktop_conf.set('APP_ID', app_id)
@@ -78,19 +75,11 @@ if appstreamcli.found()
 endif
 
 # App-Icon
-if profile == 'devel'
-    install_data(
-        'icons/scalable/apps/' + app_name + '-devel.svg',
-        install_dir: iconsdir / 'hicolor' / 'scalable' / 'apps',
-        rename: app_id + '.svg',
-    )
-else
-    install_data(
-        'icons/scalable/apps/' + app_name + '.svg',
-        install_dir: iconsdir / 'hicolor' / 'scalable' / 'apps',
-        rename: app_id + '.svg',
-    )
-endif
+install_data(
+    'icons/scalable/apps/' + app_name + '.svg',
+    install_dir: iconsdir / 'hicolor' / 'scalable' / 'apps',
+    rename: app_id + '.svg',
+)
 
 # Symbolic App-Icon
 install_data(
@@ -320,7 +309,6 @@ rnote_ui_gresources_icons_files = files(
     'icons/scalable/actions/zoom-in-symbolic.svg',
     'icons/scalable/actions/zoom-out-symbolic.svg',
     'icons/scalable/actions/zoom-real-width-symbolic.svg',
-    'icons/scalable/apps/rnote-devel.svg',
     'icons/scalable/apps/rnote.svg',
     'icons/scalable/mimetypes/application-rnote.svg',
     'icons/symbolic/apps/rnote-symbolic.svg',

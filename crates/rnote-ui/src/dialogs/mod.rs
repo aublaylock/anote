@@ -21,15 +21,9 @@ use tracing::{debug, error, warn};
 
 // About Dialog
 pub(crate) fn dialog_about(appwindow: &RnAppWindow) {
-    let app_icon_name = if config::PROFILE == "devel" {
-        config::APP_NAME.to_string() + "-devel"
-    } else {
-        config::APP_NAME.to_string()
-    };
-
     let aboutdialog = adw::AboutDialog::builder()
         .application_name(config::APP_NAME_CAPITALIZED)
-        .application_icon(app_icon_name)
+        .application_icon(config::APP_NAME)
         .comments(gettext("Sketch and take handwritten notes"))
         .website(config::APP_WEBSITE)
         .issue_url(config::APP_ISSUES_URL)
@@ -41,10 +35,6 @@ pub(crate) fn dialog_about(appwindow: &RnAppWindow) {
         .license_type(globals::APP_LICENSE)
         .version((String::from(config::APP_VERSION) + config::APP_VERSION_SUFFIX).as_str())
         .build();
-
-    if config::PROFILE == "devel" {
-        aboutdialog.add_css_class("devel");
-    }
 
     aboutdialog.present(appwindow.root().as_ref());
 }

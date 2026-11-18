@@ -46,7 +46,7 @@ app_idpath = '/com/github/flxzt/' + app_name + '/'
 
 if profile == 'devel'
     app_id = base_id + '.' + 'Devel'
-    version_suffix = '-devel'
+    version_suffix = ''
     rust_target_folder = 'debug'
 else
     app_id = base_id

@@ -1,5 +1,5 @@
 // Imports
-use crate::{RnMainHeader, RnOverlays, RnSidebar, config, dialogs};
+use crate::{RnMainHeader, RnOverlays, RnSidebar, dialogs};
 use adw::{prelude::*, subclass::prelude::*};
 use gettextrs::gettext;
 use gtk4::{
@@ -114,10 +114,6 @@ impl ObjectImpl for RnAppWindow {
         self.parent_constructed();
         let obj = self.obj();
         let _windowsettings = obj.settings();
-
-        if config::PROFILE == "devel" {
-            obj.add_css_class("devel");
-        }
 
         // Load the application css
         let css = CssProvider::new();
