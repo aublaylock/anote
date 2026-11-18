@@ -193,11 +193,25 @@ impl PenHolder {
             widget_flags |= self.change_pen_mode(pen_mode, engine_view);
         }
 
+        if let Pen::Selector(selector) = &mut self.current_pen {
+            selector.set_stylus_input(pen_mode == Some(PenMode::Pen));
+        }
+
         // Handle the event with the current pen
         let (mut event_result, wf) = self
             .current_pen
             .handle_event(event.clone(), now, engine_view);
         widget_flags |= wf | self.handle_pen_progress(event_result.progress, engine_view);
+
+        // A stylus tap with the selector that selected nothing switches back to the brush,
+        // but only when the selector is the chosen tool and not a temporary override
+        if let Pen::Selector(selector) = &mut self.current_pen
+            && selector.take_switch_to_brush_request()
+            && self.pen_mode_state.style_override().is_none()
+            && self.pen_mode_state.style(&engine_view.config.pens_config) == PenStyle::Selector
+        {
+            widget_flags |= self.change_style(PenStyle::Brush, engine_view);
+        }
 
         if !event_result.handled {
             let (propagate, wf) = self.handle_pen_event_global(event, now, engine_view);

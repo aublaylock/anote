@@ -23,7 +23,7 @@ use rnote_compose::penevent::{PenEvent, PenProgress, PenState};
 use rnote_compose::penpath::Element;
 use rnote_compose::style::indicators;
 use rnote_compose::{Color, color};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::error;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -84,6 +84,16 @@ impl Default for SelectorState {
 pub struct Selector {
     pub(super) state: SelectorState,
     pos: Option<Vector2>,
+    /// When and where the pen went down, if the press might turn out to be a tap.
+    tap_start: Option<(Instant, Vector2)>,
+    /// When and where the last tap on the selection happened, to detect double taps.
+    last_selection_tap: Option<(Instant, Vector2)>,
+    /// Whether the current press deselected the selection, which then does not count as a tap.
+    press_deselected: bool,
+    /// Whether the currently handled events come from a stylus.
+    stylus_input: bool,
+    /// Set when a stylus tap that selected nothing requests switching back to the brush.
+    switch_to_brush_requested: bool,
 }
 
 impl Default for Selector {
@@ -91,6 +101,11 @@ impl Default for Selector {
         Self {
             state: Default::default(),
             pos: None,
+            tap_start: None,
+            last_selection_tap: None,
+            press_deselected: false,
+            stylus_input: false,
+            switch_to_brush_requested: false,
         }
     }
 }
@@ -481,6 +496,67 @@ impl Selector {
     const SELECTION_OUTLINE_COLOR: piet::Color = color::GNOME_BRIGHTS[4].with_a8(240);
     /// The fill color when drawing a selection
     const SELECTION_FILL_COLOR: piet::Color = color::GNOME_BRIGHTS[2].with_a8(13);
+
+    /// The maximum duration of a tap.
+    const TAP_MAX_DURATION: Duration = Duration::from_millis(400);
+    /// The maximum distance the pen may move during a tap, in surface coordinates.
+    const TAP_MAX_DISTANCE: f64 = 10.0;
+    /// The maximum time between the two taps of a double tap.
+    const DOUBLE_TAP_MAX_INTERVAL: Duration = Duration::from_millis(600);
+    /// The maximum distance between the two taps of a double tap, in surface coordinates.
+    const DOUBLE_TAP_MAX_DISTANCE: f64 = 32.0;
+
+    /// Sets whether the events that are about to be handled come from a stylus.
+    pub(crate) fn set_stylus_input(&mut self, stylus_input: bool) {
+        self.stylus_input = stylus_input;
+    }
+
+    /// Whether a stylus tap requested switching back to the brush. Resets the request.
+    pub(crate) fn take_switch_to_brush_request(&mut self) -> bool {
+        std::mem::take(&mut self.switch_to_brush_requested)
+    }
+
+    /// Ends a possible tap, returning whether the press that started it was a stylus tap.
+    fn finish_tap(&mut self, pos: Vector2, now: Instant, total_zoom: f64) -> bool {
+        let Some((start_time, start_pos)) = self.tap_start.take() else {
+            return false;
+        };
+        self.stylus_input
+            && now.saturating_duration_since(start_time) <= Self::TAP_MAX_DURATION
+            && (pos - start_pos).length() <= Self::TAP_MAX_DISTANCE / total_zoom
+    }
+
+    /// Records a tap on the selection, returning whether it completes a double tap.
+    fn register_selection_tap(&mut self, pos: Vector2, now: Instant, total_zoom: f64) -> bool {
+        if let Some((last_time, last_pos)) = self.last_selection_tap.take()
+            && now.saturating_duration_since(last_time) <= Self::DOUBLE_TAP_MAX_INTERVAL
+            && (pos - last_pos).length() <= Self::DOUBLE_TAP_MAX_DISTANCE / total_zoom
+        {
+            return true;
+        }
+        self.last_selection_tap = Some((now, pos));
+        false
+    }
+
+    /// Duplicates the selection and selects the duplicate.
+    fn duplicate_selection(&mut self, engine_view: &mut EngineViewMut) -> WidgetFlags {
+        let mut widget_flags = WidgetFlags::default();
+        let duplicated = engine_view.store.duplicate_selection();
+        engine_view.store.update_geometry_for_strokes(&duplicated);
+        engine_view.store.regenerate_rendering_for_strokes_threaded(
+            engine_view.tasks_tx.clone(),
+            &duplicated,
+            engine_view.camera.viewport(),
+            engine_view.camera.image_scale(),
+        );
+
+        widget_flags |= engine_view.store.record(Instant::now());
+        widget_flags.resize = true;
+        widget_flags.store_modified = true;
+
+        widget_flags |= self.update_state(engine_view);
+        widget_flags
+    }
 
     fn add_to_select_path(style: SelectorStyle, path: &mut Vec<Element>, element: Element) {
         match style {

@@ -92,6 +92,11 @@ pub(crate) fn handle_pointer_controller_event(
                     handle_pen_event = true;
                     handle_shortcut_key = true;
                 }
+                // The tip touching the screen. Without this, the pen is only considered down once it moves,
+                // so a stationary tap would never produce a down event.
+                if gdk_button == gdk::BUTTON_PRIMARY {
+                    pen_state = PenState::Down;
+                }
             } else {
                 #[allow(clippy::collapsible_else_if)]
                 if gdk_button == gdk::BUTTON_PRIMARY || gdk_button == gdk::BUTTON_SECONDARY {

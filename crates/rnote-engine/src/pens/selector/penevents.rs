@@ -21,7 +21,7 @@ impl Selector {
         &mut self,
         element: Element,
         modifier_keys: HashSet<ModifierKey>,
-        _now: Instant,
+        now: Instant,
         engine_view: &mut EngineViewMut,
     ) -> (EventResult<PenProgress>, WidgetFlags) {
         let mut widget_flags = WidgetFlags::default();
@@ -29,6 +29,8 @@ impl Selector {
 
         let event_result = match &mut self.state {
             SelectorState::Idle => {
+                self.tap_start = (!self.press_deselected).then_some((now, element.pos));
+
                 // Deselect on start
                 let selection_keys = engine_view.store.selection_keys_as_rendered();
                 if !selection_keys.is_empty() {
@@ -192,6 +194,7 @@ impl Selector {
                                 SnapCorner::determine_from_bounds(*selection_bounds, element.pos);
 
                             // clicking inside the selection bounds, triggering translation
+                            self.tap_start = Some((now, element.pos));
                             *modify_state = ModifyState::Translate {
                                 start_pos: element.pos,
                                 current_pos: element.pos,
@@ -201,6 +204,7 @@ impl Selector {
                             // when clicking outside the selection bounds, reset
                             engine_view.store.set_selected_keys(selection, false);
                             self.state = SelectorState::Idle;
+                            self.press_deselected = true;
 
                             progress = PenProgress::Finished;
                         }
@@ -407,11 +411,13 @@ impl Selector {
         &mut self,
         element: Element,
         _modifier_keys: HashSet<ModifierKey>,
-        _now: Instant,
+        now: Instant,
         engine_view: &mut EngineViewMut,
     ) -> (EventResult<PenProgress>, WidgetFlags) {
         let mut widget_flags = WidgetFlags::default();
         self.pos = Some(element.pos);
+        self.press_deselected = false;
+        let total_zoom = engine_view.camera.total_zoom();
 
         let event_result = match &mut self.state {
             SelectorState::Idle => EventResult {
@@ -475,6 +481,11 @@ impl Selector {
                     }
                 };
 
+                // A stylus tap that selects nothing switches back to the brush
+                if self.finish_tap(element.pos, now, total_zoom) && new_selection.is_empty() {
+                    self.switch_to_brush_requested = true;
+                }
+
                 if !new_selection.is_empty() {
                     engine_view.store.set_selected_keys(&new_selection, true);
 
@@ -497,6 +508,8 @@ impl Selector {
                 selection,
                 selection_bounds,
             } => {
+                let was_translating = matches!(modify_state, ModifyState::Translate { .. });
+
                 match modify_state {
                     ModifyState::Translate { .. }
                     | ModifyState::Rotate { .. }
@@ -525,6 +538,14 @@ impl Selector {
                 }
 
                 *modify_state = ModifyState::Idle;
+
+                // A stylus double tap on the selection duplicates it
+                if was_translating
+                    && self.finish_tap(element.pos, now, total_zoom)
+                    && self.register_selection_tap(element.pos, now, total_zoom)
+                {
+                    widget_flags |= self.duplicate_selection(engine_view);
+                }
 
                 EventResult {
                     handled: true,
@@ -653,20 +674,7 @@ impl Selector {
                     KeyboardKey::Unicode('d') => {
                         //Duplicate selection
                         if modifier_keys.contains(&ModifierKey::KeyboardCtrl) {
-                            let duplicated = engine_view.store.duplicate_selection();
-                            engine_view.store.update_geometry_for_strokes(&duplicated);
-                            engine_view.store.regenerate_rendering_for_strokes_threaded(
-                                engine_view.tasks_tx.clone(),
-                                &duplicated,
-                                engine_view.camera.viewport(),
-                                engine_view.camera.image_scale(),
-                            );
-
-                            widget_flags |= engine_view.store.record(Instant::now());
-                            widget_flags.resize = true;
-                            widget_flags.store_modified = true;
-
-                            widget_flags |= self.update_state(engine_view);
+                            widget_flags |= self.duplicate_selection(engine_view);
 
                             EventResult {
                                 handled: true,
