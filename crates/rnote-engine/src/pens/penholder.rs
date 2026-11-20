@@ -7,10 +7,13 @@ use super::{
 use crate::DrawableOnDoc;
 use crate::camera::NudgeDirection;
 use crate::engine::{EngineView, EngineViewMut};
+use crate::pens::pensconfig::toolsconfig::ToolStyle;
 use crate::pens::shortcuts::ShortcutAction;
+use crate::store::StrokeKey;
 use crate::widgetflags::WidgetFlags;
 use futures::channel::oneshot;
 use p2d::bounding_volume::Aabb;
+use p2d::math::Vector2;
 use piet::RenderContext;
 use rnote_compose::eventresult::EventPropagation;
 use rnote_compose::penevent::{KeyboardKey, ModifierKey, PenEvent, PenProgress, ShortcutKey};
@@ -26,6 +29,78 @@ pub enum BacklogPolicy {
     Limit(Duration),
     #[serde(rename = "disable")]
     Disable,
+}
+
+/// A finished stylus tap.
+#[derive(Debug, Clone)]
+struct StylusTap {
+    /// When the tap ended.
+    end: Instant,
+    /// Where the tap ended.
+    pos: Vector2,
+    /// The strokes the tap created, for example a dot drawn with the brush.
+    strokes: Vec<StrokeKey>,
+}
+
+/// Detects a stylus double tap followed by a press, which temporarily switches from the brush to the vertical space
+/// tool until the stylus is lifted.
+#[derive(Debug, Clone, Default)]
+struct StylusTapTracker {
+    /// When and where the current press started.
+    press_start: Option<(Instant, Vector2)>,
+    /// The furthest the current press moved away from where it started.
+    press_max_distance: f64,
+    /// The most recent consecutive taps, oldest first.
+    taps: Vec<StylusTap>,
+    /// The tool style to restore once the vertical space tool activated by the gesture is finished.
+    restore_tool_style: Option<ToolStyle>,
+}
+
+impl StylusTapTracker {
+    /// The maximum duration of a tap.
+    const TAP_MAX_DURATION: Duration = Duration::from_millis(400);
+    /// The maximum distance the stylus may move during a tap, in surface coordinates.
+    const TAP_MAX_DISTANCE: f64 = 10.0;
+    /// The maximum time between the end of the first and the end of the second tap.
+    const TAPS_MAX_INTERVAL: Duration = Duration::from_millis(600);
+    /// The maximum time between the end of the second tap and the start of the press.
+    const PRESS_MAX_DELAY: Duration = Duration::from_millis(400);
+    /// The maximum distance between the taps and the press, in surface coordinates.
+    const MAX_SPREAD: f64 = 12.0;
+
+    /// Whether a press starting now at the given position completes the gesture.
+    fn press_completes_gesture(&self, now: Instant, pos: Vector2, total_zoom: f64) -> bool {
+        let [.., first, second] = self.taps.as_slice() else {
+            return false;
+        };
+        let max_spread = Self::MAX_SPREAD / total_zoom;
+        second.end.saturating_duration_since(first.end) <= Self::TAPS_MAX_INTERVAL
+            && now.saturating_duration_since(second.end) <= Self::PRESS_MAX_DELAY
+            && (second.pos - first.pos).length() <= max_spread
+            && (pos - second.pos).length() <= max_spread
+    }
+
+    /// Ends the current press, recording it if it was a tap.
+    fn end_press(&mut self, now: Instant, pos: Vector2, total_zoom: f64, strokes: Vec<StrokeKey>) {
+        let Some((start_time, start_pos)) = self.press_start.take() else {
+            return;
+        };
+        let distance = self.press_max_distance.max((pos - start_pos).length());
+        let is_tap = now.saturating_duration_since(start_time) <= Self::TAP_MAX_DURATION
+            && distance <= Self::TAP_MAX_DISTANCE / total_zoom;
+        if is_tap {
+            self.taps.push(StylusTap {
+                end: now,
+                pos,
+                strokes,
+            });
+            if self.taps.len() > 2 {
+                self.taps.remove(0);
+            }
+        } else {
+            self.taps.clear();
+        }
+    }
 }
 
 /// The Penholder holds the pens and related state and handles pen events.
@@ -45,6 +120,8 @@ pub struct PenHolder {
     toggle_pen_style: Option<PenStyle>,
     #[serde(skip)]
     prev_shortcut_key: Option<ShortcutKey>,
+    #[serde(skip)]
+    stylus_tap_tracker: StylusTapTracker,
 }
 
 impl Default for PenHolder {
@@ -57,6 +134,7 @@ impl Default for PenHolder {
             progress: PenProgress::Idle,
             toggle_pen_style: None,
             prev_shortcut_key: None,
+            stylus_tap_tracker: StylusTapTracker::default(),
         }
     }
 }
@@ -193,8 +271,13 @@ impl PenHolder {
             widget_flags |= self.change_pen_mode(pen_mode, engine_view);
         }
 
+        let stylus_input = pen_mode == Some(PenMode::Pen);
+        if stylus_input {
+            widget_flags |= self.track_stylus_press(&event, now, engine_view);
+        }
+
         if let Pen::Selector(selector) = &mut self.current_pen {
-            selector.set_stylus_input(pen_mode == Some(PenMode::Pen));
+            selector.set_stylus_input(stylus_input);
         }
 
         // Handle the event with the current pen
@@ -202,6 +285,27 @@ impl PenHolder {
             .current_pen
             .handle_event(event.clone(), now, engine_view);
         widget_flags |= wf | self.handle_pen_progress(event_result.progress, engine_view);
+
+        if stylus_input && let PenEvent::Up { element, .. } = &event {
+            let strokes = match &mut self.current_pen {
+                Pen::Brush(brush) => brush.take_last_finished_stroke().into_iter().collect(),
+                _ => vec![],
+            };
+            self.stylus_tap_tracker.end_press(
+                now,
+                element.pos,
+                engine_view.camera.total_zoom(),
+                strokes,
+            );
+        }
+
+        // Restore the tool style once the vertical space tool activated by the stylus gesture is finished
+        if self.pen_mode_state.style_override().is_none()
+            && let Some(tool_style) = self.stylus_tap_tracker.restore_tool_style.take()
+        {
+            engine_view.config.pens_config.tools_config.style = tool_style;
+            widget_flags.refresh_ui = true;
+        }
 
         // A stylus tap with the selector that selected nothing switches back to the brush,
         // but only when the selector is the chosen tool and not a temporary override
@@ -225,6 +329,58 @@ impl PenHolder {
         widget_flags.redraw = true;
 
         (event_result.propagate, widget_flags)
+    }
+
+    /// Tracks stylus presses before they are handled by the current pen.
+    ///
+    /// A double tap followed by a press with the brush switches to the vertical space tool until the stylus is lifted.
+    /// The dots drawn by the two taps are removed.
+    fn track_stylus_press(
+        &mut self,
+        event: &PenEvent,
+        now: Instant,
+        engine_view: &mut EngineViewMut,
+    ) -> WidgetFlags {
+        let mut widget_flags = WidgetFlags::default();
+        let PenEvent::Down { element, .. } = event else {
+            return widget_flags;
+        };
+        let tracker = &mut self.stylus_tap_tracker;
+
+        if let Some((_, start_pos)) = tracker.press_start {
+            tracker.press_max_distance = tracker
+                .press_max_distance
+                .max((element.pos - start_pos).length());
+            return widget_flags;
+        }
+        tracker.press_start = Some((now, element.pos));
+        tracker.press_max_distance = 0.0;
+
+        let is_brush = self.pen_mode_state.style_override().is_none()
+            && self.pen_mode_state.style(&engine_view.config.pens_config) == PenStyle::Brush;
+        if !is_brush
+            || !tracker.press_completes_gesture(now, element.pos, engine_view.camera.total_zoom())
+        {
+            return widget_flags;
+        }
+
+        // Remove the dots drawn by the taps
+        let tap_strokes = tracker
+            .taps
+            .drain(..)
+            .flat_map(|tap| tap.strokes)
+            .collect::<Vec<StrokeKey>>();
+        if !tap_strokes.is_empty() {
+            engine_view.store.set_trashed_keys(&tap_strokes, true);
+            widget_flags |= engine_view.store.record(Instant::now());
+            widget_flags.store_modified = true;
+        }
+
+        let tools_config = &mut engine_view.config.pens_config.tools_config;
+        tracker.restore_tool_style = Some(tools_config.style);
+        tools_config.style = ToolStyle::VerticalSpace;
+        widget_flags |= self.change_style_override(Some(PenStyle::Tools), engine_view);
+        widget_flags
     }
 
     /// Handle a requested animation frame.

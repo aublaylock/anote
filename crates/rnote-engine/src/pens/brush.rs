@@ -52,12 +52,15 @@ enum BrushState {
 #[derive(Debug)]
 pub struct Brush {
     state: BrushState,
+    /// The stroke that was finished last, until taken.
+    last_finished_stroke: Option<StrokeKey>,
 }
 
 impl Default for Brush {
     fn default() -> Self {
         Self {
             state: BrushState::Idle,
+            last_finished_stroke: None,
         }
     }
 }
@@ -86,6 +89,7 @@ impl PenBehaviour for Brush {
         engine_view: &mut EngineViewMut,
     ) -> (EventResult<PenProgress>, WidgetFlags) {
         let mut widget_flags = WidgetFlags::default();
+        let stroke_before = self.current_stroke_key();
 
         let event_result = match (&mut self.state, event) {
             (BrushState::Idle, PenEvent::Down { element, .. }) => {
@@ -340,6 +344,10 @@ impl PenBehaviour for Brush {
             }
         };
 
+        if matches!(self.state, BrushState::Idle) && stroke_before.is_some() {
+            self.last_finished_stroke = stroke_before;
+        }
+
         (event_result, widget_flags)
     }
 }
@@ -397,6 +405,24 @@ impl DrawableOnDoc for Brush {
 
 impl Brush {
     const INPUT_OVERSHOOT: f64 = 30.0;
+
+    /// The key of the stroke that is currently drawn.
+    fn current_stroke_key(&self) -> Option<StrokeKey> {
+        match &self.state {
+            BrushState::Idle => None,
+            BrushState::Drawing {
+                current_stroke_key, ..
+            }
+            | BrushState::StraightLine {
+                current_stroke_key, ..
+            } => Some(*current_stroke_key),
+        }
+    }
+
+    /// Takes the key of the stroke that was finished last.
+    pub(crate) fn take_last_finished_stroke(&mut self) -> Option<StrokeKey> {
+        self.last_finished_stroke.take()
+    }
     /// How long the pen must be held still before the stroke is converted to a straight line.
     const HOLD_DURATION: Duration = Duration::from_millis(500);
     /// Movement (in surface pixels) below which the pen is considered to be held still.
