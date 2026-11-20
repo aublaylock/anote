@@ -193,10 +193,12 @@ impl StrokeStore {
     pub(crate) fn record(&mut self, _now: Instant) -> WidgetFlags {
         let mut widget_flags = WidgetFlags::default();
 
+        // Compare with the entry of the current state, not the newest entry. After undoing they differ, and comparing
+        // with the newest entry would treat the unchanged state as changed, discarding the redo history.
         if self
             .history
-            .back()
-            .map(|last| !self.eq_w_history_entry(last))
+            .get(self.live_index)
+            .map(|live| !self.eq_w_history_entry(live))
             .unwrap_or(true)
         {
             // as soon as the current state is recorded, remove the future
@@ -225,10 +227,12 @@ impl StrokeStore {
     pub(crate) fn update_latest_history_entry(&mut self, _now: Instant) -> WidgetFlags {
         let mut widget_flags = WidgetFlags::default();
 
+        // Compare with the entry of the current state, not the newest entry. After undoing they differ, and comparing
+        // with the newest entry would treat the unchanged state as changed, discarding the redo history.
         if self
             .history
-            .back()
-            .map(|last| !self.eq_w_history_entry(last))
+            .get(self.live_index)
+            .map(|live| !self.eq_w_history_entry(live))
             .unwrap_or(true)
         {
             // as soon as the current state is recorded, remove the future

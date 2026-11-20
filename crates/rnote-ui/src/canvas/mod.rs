@@ -63,8 +63,10 @@ mod imp {
         pub(crate) hadjustment: RefCell<Option<Adjustment>>,
         pub(crate) vadjustment: RefCell<Option<Adjustment>>,
         pub(crate) workaround_kinetic_scrolling_pending: Cell<bool>,
-        /// When the primary stylus button was last pressed, to detect double clicks.
-        pub(crate) stylus_primary_button_last_press: Cell<Option<Instant>>,
+        /// When the primary stylus button was pressed, while it is held.
+        pub(crate) stylus_primary_button_press: Cell<Option<Instant>>,
+        /// Whether the stylus touched the canvas since the primary stylus button was pressed.
+        pub(crate) stylus_primary_button_touched: Cell<bool>,
         pub(crate) hscroll_policy: Cell<ScrollablePolicy>,
         pub(crate) vscroll_policy: Cell<ScrollablePolicy>,
         pub(crate) regular_cursor_icon_name: RefCell<String>,
@@ -161,7 +163,8 @@ mod imp {
                 hadjustment: RefCell::new(None),
                 vadjustment: RefCell::new(None),
                 workaround_kinetic_scrolling_pending: Cell::new(false),
-                stylus_primary_button_last_press: Cell::new(None),
+                stylus_primary_button_press: Cell::new(None),
+                stylus_primary_button_touched: Cell::new(false),
                 hscroll_policy: Cell::new(ScrollablePolicy::Minimum),
                 vscroll_policy: Cell::new(ScrollablePolicy::Minimum),
                 regular_cursor: RefCell::new(regular_cursor),

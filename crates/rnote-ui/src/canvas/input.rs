@@ -117,28 +117,10 @@ pub(crate) fn handle_pointer_controller_event(
                     propagation = ep.into_glib();
                 }
 
-                // Double clicking the primary stylus button undoes
+                // Track a click of the primary stylus button that does not touch the canvas
                 if shortcut_key == Some(ShortcutKey::StylusPrimaryButton) {
-                    let last_press = canvas
-                        .imp()
-                        .stylus_primary_button_last_press
-                        .replace(Some(now));
-                    if last_press.is_some_and(|last_press| {
-                        now.saturating_duration_since(last_press)
-                            <= STYLUS_BUTTON_DOUBLE_CLICK_INTERVAL
-                    }) {
-                        canvas.imp().stylus_primary_button_last_press.set(None);
-                        // Switch back to the brush first, also ending a temporary tool from the button presses.
-                        // Doing this after undoing would let the previous pen record the undone state as a new
-                        // history entry, so that the next undo would appear to do nothing.
-                        widget_flags |= canvas.engine_mut().change_pen_style_override(None);
-                        widget_flags |= canvas.engine_mut().change_pen_style(PenStyle::Brush);
-                        if let Err(e) = canvas.activate_action("win.undo", None) {
-                            tracing::error!(
-                                "Activating undo after stylus button double click failed, Err: {e:?}"
-                            );
-                        }
-                    }
+                    canvas.imp().stylus_primary_button_press.set(Some(now));
+                    canvas.imp().stylus_primary_button_touched.set(false);
                 }
             }
         }
@@ -154,6 +136,23 @@ pub(crate) fn handle_pointer_controller_event(
                     || gdk_button == gdk::BUTTON_MIDDLE
                 {
                     handle_pen_event = true;
+                }
+
+                // A quick click of the primary stylus button without touching the canvas undoes and switches
+                // back to the brush
+                if gdk_button == gdk::BUTTON_SECONDARY
+                    && let Some(press) = canvas.imp().stylus_primary_button_press.take()
+                    && !canvas.imp().stylus_primary_button_touched.get()
+                    && now.saturating_duration_since(press) <= STYLUS_BUTTON_CLICK_MAX_DURATION
+                {
+                    // Switch back to the brush first, also ending a temporary tool from the button press
+                    widget_flags |= canvas.engine_mut().change_pen_style_override(None);
+                    widget_flags |= canvas.engine_mut().change_pen_style(PenStyle::Brush);
+                    if let Err(e) = canvas.activate_action("win.undo", None) {
+                        tracing::error!(
+                            "Activating undo after stylus button click failed, Err: {e:?}"
+                        );
+                    }
                 }
 
                 // again, this is the method to detect proximity on stylus.
@@ -198,6 +197,10 @@ pub(crate) fn handle_pointer_controller_event(
         }
         _ => {}
     };
+
+    if is_stylus && pen_state == PenState::Down {
+        canvas.imp().stylus_primary_button_touched.set(true);
+    }
 
     if handle_pen_event {
         let Some(elements) = retrieve_pointer_elements(canvas, now, event, backlog_policy) else {
@@ -452,8 +455,8 @@ fn retrieve_pointer_elements(
     Some(elements)
 }
 
-/// The maximum time between the two presses of a stylus button double click.
-const STYLUS_BUTTON_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+/// The maximum duration of a stylus button click that undoes.
+const STYLUS_BUTTON_CLICK_MAX_DURATION: Duration = Duration::from_millis(500);
 
 pub(crate) fn retrieve_button_shortcut_key(
     gdk_button: u32,
