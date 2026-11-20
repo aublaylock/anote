@@ -16,6 +16,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+/// Touch pans and pinches that move further than this between two consecutive events, in surface coordinates,
+/// are discarded as jumps. These are usually caused by a resting palm.
+const TOUCH_MAX_STEP_DISTANCE: f64 = 100.0;
+/// Pinches that change the scale by more than this factor between two consecutive events are discarded as jumps.
+const PINCH_MAX_STEP_FACTOR: f64 = 1.3;
+
 /// State of moving or resizing selected images with touch gestures.
 #[derive(Debug, Default)]
 struct ImageTouchState {
@@ -27,10 +33,6 @@ struct ImageTouchState {
     applied_offset: Cell<Vector2>,
     /// Whether a pinch is resizing the selected images.
     resizing: Cell<bool>,
-    /// The center between the fingers when the pinch was last handled, in wrapper coordinates.
-    last_pinch_center: Cell<Vector2>,
-    /// The scale already applied while resizing.
-    applied_scale: Cell<f64>,
 }
 
 #[derive(Debug, Default)]
@@ -590,10 +592,17 @@ mod imp {
             // Drag canvas gesture
             {
                 let touch_drag_start = Rc::new(Cell::new(Vector2::ZERO));
+                // The drag offset of the previous event and the sum of discarded jumps
+                let touch_drag_prev = Rc::new(Cell::new(Vector2::ZERO));
+                let touch_drag_discarded = Rc::new(Cell::new(Vector2::ZERO));
 
                 self.canvas_drag_gesture.connect_drag_begin(clone!(
                     #[strong]
                     touch_drag_start,
+                    #[strong]
+                    touch_drag_prev,
+                    #[strong]
+                    touch_drag_discarded,
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |gesture, _, _| {
@@ -611,11 +620,17 @@ mod imp {
                         }
 
                         touch_drag_start.set(canvaswrapper.canvas().engine_ref().camera.offset());
+                        touch_drag_prev.set(Vector2::ZERO);
+                        touch_drag_discarded.set(Vector2::ZERO);
                     }
                 ));
                 self.canvas_drag_gesture.connect_drag_update(clone!(
                     #[strong]
                     touch_drag_start,
+                    #[strong]
+                    touch_drag_prev,
+                    #[strong]
+                    touch_drag_discarded,
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |_, x, y| {
@@ -623,8 +638,16 @@ mod imp {
                         if canvaswrapper.imp().image_touch.moving.get() {
                             return;
                         }
+                        // Discard sudden jumps, which are usually caused by a resting palm
+                        let drag = Vector2::new(x, y);
+                        let step = drag - touch_drag_prev.replace(drag);
+                        if step.length() > TOUCH_MAX_STEP_DISTANCE {
+                            touch_drag_discarded.set(touch_drag_discarded.get() + step);
+                            return;
+                        }
                         let canvas = canvaswrapper.canvas();
-                        let new_offset = touch_drag_start.get() - Vector2::new(x, y);
+                        let new_offset =
+                            touch_drag_start.get() - (drag - touch_drag_discarded.get());
                         let widget_flags = canvas.engine_mut().camera_set_offset_expand(new_offset);
                         canvas.emit_handle_widget_flags(widget_flags);
                     }
@@ -702,23 +725,19 @@ mod imp {
 
             // Canvas gesture zooming with dragging
             {
+                // The pinch is handled in steps between consecutive events, so that sudden jumps can be
+                // discarded.
                 let prev_scale = Rc::new(Cell::new(1_f64));
-                let zoom_begin = Rc::new(Cell::new(1_f64));
+                let prev_center: Rc<Cell<Option<Vector2>>> = Rc::new(Cell::new(None));
                 let new_zoom = Rc::new(Cell::new(1.0));
-                let bbcenter_begin: Rc<Cell<Option<Vector2>>> = Rc::new(Cell::new(None));
-                let offset_begin = Rc::new(Cell::new(Vector2::ZERO));
 
                 self.canvas_zoom_gesture.connect_begin(clone!(
                     #[strong]
-                    zoom_begin,
-                    #[strong]
-                    new_zoom,
-                    #[strong]
                     prev_scale,
                     #[strong]
-                    bbcenter_begin,
+                    prev_center,
                     #[strong]
-                    offset_begin,
+                    new_zoom,
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |gesture, _| {
@@ -727,97 +746,80 @@ mod imp {
                         // workaround for https://gitlab.gnome.org/GNOME/gtk/-/issues/187
                         canvaswrapper.imp().workaround_disable_kinetic_scrolling();
 
+                        let center = gesture
+                            .bounding_box_center()
+                            .map(|(x, y)| Vector2::new(x, y));
+                        prev_scale.set(1.0);
+                        prev_center.set(center);
+                        new_zoom.set(canvaswrapper.canvas().engine_ref().camera.total_zoom());
+
                         // Pinching on selected images resizes them instead of zooming
                         let imp = canvaswrapper.imp();
-                        if let Some((x, y)) = gesture.bounding_box_center()
-                            && imp.selected_images_contain(x, y).is_some()
+                        if let Some(center) = center
+                            && imp.selected_images_contain(center.x, center.y).is_some()
                         {
                             imp.image_touch.resizing.set(true);
-                            imp.image_touch.last_pinch_center.set(Vector2::new(x, y));
-                            imp.image_touch.applied_scale.set(1.0);
-                            return;
                         }
-
-                        let current_zoom = canvaswrapper.canvas().engine_ref().camera.total_zoom();
-
-                        zoom_begin.set(current_zoom);
-                        new_zoom.set(current_zoom);
-                        prev_scale.set(1.0);
-
-                        bbcenter_begin.set(
-                            gesture
-                                .bounding_box_center()
-                                .map(|(x, y)| Vector2::new(x, y)),
-                        );
-                        offset_begin.set(canvaswrapper.canvas().engine_ref().camera.offset());
                     }
                 ));
 
                 self.canvas_zoom_gesture.connect_scale_changed(clone!(
                     #[strong]
-                    zoom_begin,
-                    #[strong]
-                    new_zoom,
-                    #[strong]
                     prev_scale,
                     #[strong]
-                    bbcenter_begin,
+                    prev_center,
                     #[strong]
-                    offset_begin,
+                    new_zoom,
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |gesture, scale| {
                         let canvas = canvaswrapper.canvas();
-
                         let imp = canvaswrapper.imp();
-                        if imp.image_touch.resizing.get() {
-                            let factor = scale / imp.image_touch.applied_scale.replace(scale);
-                            if let Some((x, y)) = gesture.bounding_box_center() {
-                                // Move along with the center between the fingers
-                                let center = Vector2::new(x, y);
-                                let delta = (center
-                                    - imp.image_touch.last_pinch_center.replace(center))
-                                    / canvas.engine_ref().camera.total_zoom();
-                                let widget_flags = canvas.engine_mut().image_touch_translate(delta);
-                                canvas.emit_handle_widget_flags(widget_flags);
 
-                                // Resize around the center between the fingers
-                                if let Some(pivot) = imp.wrapper_pos_to_doc(x, y) {
-                                    let widget_flags =
-                                        canvas.engine_mut().image_touch_scale(factor, pivot);
-                                    canvas.emit_handle_widget_flags(widget_flags);
-                                }
+                        let Some(center) = gesture
+                            .bounding_box_center()
+                            .map(|(x, y)| Vector2::new(x, y))
+                        else {
+                            return;
+                        };
+                        let factor = scale / prev_scale.replace(scale);
+                        let Some(prev_center) = prev_center.replace(Some(center)) else {
+                            return;
+                        };
+                        let center_delta = center - prev_center;
+
+                        // Discard sudden jumps, which are usually caused by a resting palm touching or
+                        // leaving the screen. The pinch continues from the new finger positions.
+                        if !(1.0 / PINCH_MAX_STEP_FACTOR..=PINCH_MAX_STEP_FACTOR).contains(&factor)
+                            || center_delta.length() > TOUCH_MAX_STEP_DISTANCE
+                        {
+                            return;
+                        }
+
+                        if imp.image_touch.resizing.get() {
+                            // Move along with the center between the fingers
+                            let delta = center_delta / canvas.engine_ref().camera.total_zoom();
+                            let widget_flags = canvas.engine_mut().image_touch_translate(delta);
+                            canvas.emit_handle_widget_flags(widget_flags);
+
+                            // Resize around the center between the fingers
+                            if let Some(pivot) = imp.wrapper_pos_to_doc(center.x, center.y) {
+                                let widget_flags =
+                                    canvas.engine_mut().image_touch_scale(factor, pivot);
+                                canvas.emit_handle_widget_flags(widget_flags);
                             }
                             return;
                         }
 
-                        if (Camera::ZOOM_MIN..=Camera::ZOOM_MAX)
-                            .contains(&(zoom_begin.get() * scale))
-                        {
-                            new_zoom.set(zoom_begin.get() * scale);
-                            prev_scale.set(scale);
-                        }
+                        let old_zoom = new_zoom.get();
+                        let zoom = (old_zoom * factor).clamp(Camera::ZOOM_MIN, Camera::ZOOM_MAX);
+                        new_zoom.set(zoom);
+                        let offset = canvas.engine_ref().camera.offset();
 
-                        let mut widget_flags = canvas.engine_mut().zoom_w_timeout(new_zoom.get());
-
-                        if let Some(bbcenter_current) = gesture
-                            .bounding_box_center()
-                            .map(|(x, y)| Vector2::new(x, y))
-                        {
-                            let bbcenter_begin = if let Some(bbcenter_begin) = bbcenter_begin.get()
-                            {
-                                bbcenter_begin
-                            } else {
-                                // Set the center if not set by gesture begin handler
-                                bbcenter_begin.set(Some(bbcenter_current));
-                                bbcenter_current
-                            };
-                            let bbcenter_delta =
-                                bbcenter_current - bbcenter_begin * prev_scale.get();
-                            let new_offset = offset_begin.get() * prev_scale.get() - bbcenter_delta;
-                            widget_flags |=
-                                canvas.engine_mut().camera_set_offset_expand(new_offset);
-                        }
+                        let mut widget_flags = canvas.engine_mut().zoom_w_timeout(zoom);
+                        // Keep the document point under the previous center under the current center
+                        let new_offset = (offset + prev_center) * (zoom / old_zoom) - center;
+                        widget_flags |= canvas.engine_mut().camera_set_offset_expand(new_offset);
 
                         canvas.emit_handle_widget_flags(widget_flags);
                     }
