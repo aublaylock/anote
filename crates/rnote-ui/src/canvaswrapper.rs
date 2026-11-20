@@ -22,6 +22,28 @@ const TOUCH_MAX_STEP_DISTANCE: f64 = 100.0;
 /// Pinches that change the scale by more than this factor between two consecutive events are discarded as jumps.
 const PINCH_MAX_STEP_FACTOR: f64 = 1.3;
 
+/// The maximum duration of a two finger tap.
+const TWO_FINGER_TAP_MAX_DURATION: Duration = Duration::from_millis(300);
+/// The maximum time between the two two-finger taps of a double tap.
+const TWO_FINGER_DOUBLE_TAP_MAX_INTERVAL: Duration = Duration::from_millis(500);
+/// The maximum movement of the center between the fingers during a two finger tap, in surface coordinates.
+const TWO_FINGER_TAP_MAX_DISTANCE: f64 = 15.0;
+/// The maximum distance between the two taps of a two finger double tap, in surface coordinates.
+const TWO_FINGER_DOUBLE_TAP_MAX_DISTANCE: f64 = 60.0;
+/// The maximum scale change during a two finger tap.
+const TWO_FINGER_TAP_MAX_SCALE_CHANGE: f64 = 0.1;
+
+/// State for detecting a two finger double tap, which pastes an image from the clipboard.
+#[derive(Debug, Default)]
+struct TwoFingerTapState {
+    /// When and where the current two finger touch started, in wrapper coordinates.
+    start: Cell<Option<(Instant, Vector2)>>,
+    /// Whether the current two finger touch moved or scaled too much to be a tap.
+    moved: Cell<bool>,
+    /// When and where the last two finger tap happened, in wrapper coordinates.
+    last_tap: Cell<Option<(Instant, Vector2)>>,
+}
+
 /// State of moving or resizing selected images with touch gestures.
 #[derive(Debug, Default)]
 struct ImageTouchState {
@@ -57,6 +79,7 @@ mod imp {
         pub(crate) pointer_pos: Cell<Option<Vector2>>,
         pub(crate) last_contextmenu_pos: Cell<Option<Vector2>>,
         image_touch: ImageTouchState,
+        two_finger_tap: TwoFingerTapState,
 
         pub(crate) pointer_motion_controller: EventControllerMotion,
         pub(crate) canvas_drag_gesture: GestureDrag,
@@ -173,6 +196,7 @@ mod imp {
                 pointer_pos: Cell::new(None),
                 last_contextmenu_pos: Cell::new(None),
                 image_touch: ImageTouchState::default(),
+                two_finger_tap: TwoFingerTapState::default(),
 
                 pointer_motion_controller,
                 canvas_drag_gesture,
@@ -397,6 +421,86 @@ mod imp {
             let pos = self.wrapper_pos_to_doc(x, y)?;
             let bounds = self.canvas.engine_ref().selected_images_bounds()?;
             bounds.contains_local_point(pos).then_some(bounds)
+        }
+
+        /// Handles the end of a two finger touch, pasting an image from the clipboard on a two finger double tap.
+        fn two_finger_touch_end(&self) {
+            let state = &self.two_finger_tap;
+            let Some((start_time, center)) = state.start.take() else {
+                return;
+            };
+            if state.moved.get() || start_time.elapsed() > TWO_FINGER_TAP_MAX_DURATION {
+                state.last_tap.set(None);
+                return;
+            }
+            let now = Instant::now();
+            let is_double_tap = state
+                .last_tap
+                .take()
+                .is_some_and(|(last_time, last_center)| {
+                    now.saturating_duration_since(last_time) <= TWO_FINGER_DOUBLE_TAP_MAX_INTERVAL
+                        && (center - last_center).length() <= TWO_FINGER_DOUBLE_TAP_MAX_DISTANCE
+                });
+            if !is_double_tap {
+                state.last_tap.set(Some((now, center)));
+                return;
+            }
+            if let Some(pos) = self.wrapper_pos_to_doc(center.x, center.y) {
+                self.paste_clipboard_image_at(pos);
+            }
+        }
+
+        /// Pastes the image on the clipboard centered at the given document position.
+        ///
+        /// Does nothing if the clipboard does not contain an image.
+        fn paste_clipboard_image_at(&self, pos: Vector2) {
+            let obj = self.obj();
+            let clipboard = obj.clipboard();
+            let formats = clipboard.formats();
+            if ![
+                "image/png",
+                "image/jpeg",
+                "image/jpg",
+                "image/tiff",
+                "image/bmp",
+            ]
+            .into_iter()
+            .any(|mime| formats.contain_mime_type(mime))
+            {
+                return;
+            }
+            let respect_borders = obj
+                .root()
+                .and_downcast::<RnAppWindow>()
+                .is_some_and(|appwindow| appwindow.respect_borders());
+            let canvas = self.canvas.get();
+
+            glib::spawn_future_local(clone!(
+                #[weak]
+                canvas,
+                async move {
+                    match clipboard.read_texture_future().await {
+                        Ok(Some(texture)) => {
+                            if let Err(e) = canvas
+                                .load_in_bitmapimage_bytes_centered(
+                                    texture.save_to_png_bytes().to_vec(),
+                                    pos,
+                                    respect_borders,
+                                )
+                                .await
+                            {
+                                tracing::error!(
+                                    "Pasting clipboard image after two finger double tap failed, Err: {e:?}"
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => tracing::error!(
+                            "Reading clipboard image after two finger double tap failed, Err: {e:?}"
+                        ),
+                    }
+                }
+            ));
         }
 
         /// Finishes moving or resizing images with touch, if active.
@@ -749,12 +853,16 @@ mod imp {
                         let center = gesture
                             .bounding_box_center()
                             .map(|(x, y)| Vector2::new(x, y));
+                        let imp = canvaswrapper.imp();
+                        imp.two_finger_tap
+                            .start
+                            .set(center.map(|center| (Instant::now(), center)));
+                        imp.two_finger_tap.moved.set(false);
                         prev_scale.set(1.0);
                         prev_center.set(center);
                         new_zoom.set(canvaswrapper.canvas().engine_ref().camera.total_zoom());
 
                         // Pinching on selected images resizes them instead of zooming
-                        let imp = canvaswrapper.imp();
                         if let Some(center) = center
                             && imp.selected_images_contain(center.x, center.y).is_some()
                         {
@@ -782,6 +890,14 @@ mod imp {
                         else {
                             return;
                         };
+                        // Too much movement or scaling for a two finger tap
+                        if let Some((_, start_center)) = imp.two_finger_tap.start.get()
+                            && ((scale - 1.0).abs() > TWO_FINGER_TAP_MAX_SCALE_CHANGE
+                                || (center - start_center).length() > TWO_FINGER_TAP_MAX_DISTANCE)
+                        {
+                            imp.two_finger_tap.moved.set(true);
+                        }
+
                         let factor = scale / prev_scale.replace(scale);
                         let Some(prev_center) = prev_center.replace(Some(center)) else {
                             return;
@@ -832,6 +948,7 @@ mod imp {
                         // workaround for https://gitlab.gnome.org/GNOME/gtk/-/issues/187
                         canvaswrapper.imp().workaround_restore_kinetic_scrolling();
                         canvaswrapper.imp().image_touch_finish();
+                        canvaswrapper.imp().two_finger_touch_end();
 
                         let widget_flags = canvaswrapper
                             .canvas()
@@ -852,6 +969,7 @@ mod imp {
                         // workaround for https://gitlab.gnome.org/GNOME/gtk/-/issues/187
                         canvaswrapper.imp().workaround_restore_kinetic_scrolling();
                         canvaswrapper.imp().image_touch_finish();
+                        canvaswrapper.imp().two_finger_tap.start.set(None);
 
                         let widget_flags = canvaswrapper
                             .canvas()

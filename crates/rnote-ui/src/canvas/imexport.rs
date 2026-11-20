@@ -4,7 +4,9 @@ use crate::RnAppWindow;
 use futures::channel::oneshot;
 use gtk4::{gio, prelude::*};
 use p2d::math::Vector2;
+use rnote_compose::Transformable;
 use rnote_compose::ext::Vector2Ext;
+use rnote_compose::shapes::Shapeable;
 use rnote_engine::WidgetFlags;
 use rnote_engine::engine::export::{DocExportPrefs, DocPagesExportPrefs, SelectionExportPrefs};
 use rnote_engine::engine::{EngineSnapshot, StrokeContent};
@@ -121,6 +123,31 @@ impl RnCanvas {
             self.engine_mut()
                 .generate_bitmapimage_from_bytes(pos, bytes, respect_borders);
         let bitmapimage = bitmapimage_receiver.await??;
+        let widget_flags = self
+            .engine_mut()
+            .import_generated_content(vec![(Stroke::BitmapImage(bitmapimage), None)], false);
+
+        self.emit_handle_widget_flags(widget_flags);
+        Ok(())
+    }
+
+    /// Loads in bytes from a bitmap image and imports it centered on the given position.
+    ///
+    /// `center` is in coordinate space of the doc.
+    pub(crate) async fn load_in_bitmapimage_bytes_centered(
+        &self,
+        bytes: Vec<u8>,
+        center: Vector2,
+        respect_borders: bool,
+    ) -> anyhow::Result<()> {
+        // Generated at the top left of the viewport, so that it is sized to fit the viewport like when pasting
+        let pos = self.engine_ref().camera.viewport().mins;
+        let bitmapimage_receiver =
+            self.engine_mut()
+                .generate_bitmapimage_from_bytes(pos, bytes, respect_borders);
+        let mut bitmapimage = bitmapimage_receiver.await??;
+        let offset = center - bitmapimage.rectangle.bounds().center();
+        bitmapimage.translate(offset);
         let widget_flags = self
             .engine_mut()
             .import_generated_content(vec![(Stroke::BitmapImage(bitmapimage), None)], false);
