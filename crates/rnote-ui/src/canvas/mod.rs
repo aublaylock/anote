@@ -30,7 +30,7 @@ use rnote_engine::ext::GrapheneRectExt;
 use rnote_engine::{Engine, WidgetFlags};
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, warn};
 
 #[derive(Debug, Default)]
@@ -63,6 +63,8 @@ mod imp {
         pub(crate) hadjustment: RefCell<Option<Adjustment>>,
         pub(crate) vadjustment: RefCell<Option<Adjustment>>,
         pub(crate) workaround_kinetic_scrolling_pending: Cell<bool>,
+        /// When the primary stylus button was last pressed, to detect double clicks.
+        pub(crate) stylus_primary_button_last_press: Cell<Option<Instant>>,
         pub(crate) hscroll_policy: Cell<ScrollablePolicy>,
         pub(crate) vscroll_policy: Cell<ScrollablePolicy>,
         pub(crate) regular_cursor_icon_name: RefCell<String>,
@@ -159,6 +161,7 @@ mod imp {
                 hadjustment: RefCell::new(None),
                 vadjustment: RefCell::new(None),
                 workaround_kinetic_scrolling_pending: Cell::new(false),
+                stylus_primary_button_last_press: Cell::new(None),
                 hscroll_policy: Cell::new(ScrollablePolicy::Minimum),
                 vscroll_policy: Cell::new(ScrollablePolicy::Minimum),
                 regular_cursor: RefCell::new(regular_cursor),

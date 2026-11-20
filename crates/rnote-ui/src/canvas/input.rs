@@ -1,14 +1,14 @@
 // Imports
 use super::RnCanvas;
-use gtk4::{Native, gdk, glib, graphene, prelude::*};
+use gtk4::{Native, gdk, glib, graphene, prelude::*, subclass::prelude::ObjectSubclassIsExt};
 use p2d::math::Vector2;
 use rnote_compose::penevent::{KeyboardKey, ModifierKey, PenEvent, PenState, ShortcutKey};
 use rnote_compose::penpath::Element;
 use rnote_engine::WidgetFlags;
 use rnote_engine::ext::EventPropagationExt;
 use rnote_engine::ext::GraphenePointExt;
-use rnote_engine::pens::PenMode;
 use rnote_engine::pens::penholder::BacklogPolicy;
+use rnote_engine::pens::{PenMode, PenStyle};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tracing::trace;
@@ -115,6 +115,30 @@ pub(crate) fn handle_pointer_controller_event(
                         .handle_pressed_shortcut_key(shortcut_key, now);
                     widget_flags |= wf;
                     propagation = ep.into_glib();
+                }
+
+                // Double clicking the primary stylus button undoes
+                if shortcut_key == Some(ShortcutKey::StylusPrimaryButton) {
+                    let last_press = canvas
+                        .imp()
+                        .stylus_primary_button_last_press
+                        .replace(Some(now));
+                    if last_press.is_some_and(|last_press| {
+                        now.saturating_duration_since(last_press)
+                            <= STYLUS_BUTTON_DOUBLE_CLICK_INTERVAL
+                    }) {
+                        canvas.imp().stylus_primary_button_last_press.set(None);
+                        // Switch back to the brush first, also ending a temporary tool from the button presses.
+                        // Doing this after undoing would let the previous pen record the undone state as a new
+                        // history entry, so that the next undo would appear to do nothing.
+                        widget_flags |= canvas.engine_mut().change_pen_style_override(None);
+                        widget_flags |= canvas.engine_mut().change_pen_style(PenStyle::Brush);
+                        if let Err(e) = canvas.activate_action("win.undo", None) {
+                            tracing::error!(
+                                "Activating undo after stylus button double click failed, Err: {e:?}"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -427,6 +451,9 @@ fn retrieve_pointer_elements(
 
     Some(elements)
 }
+
+/// The maximum time between the two presses of a stylus button double click.
+const STYLUS_BUTTON_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 
 pub(crate) fn retrieve_button_shortcut_key(
     gdk_button: u32,
